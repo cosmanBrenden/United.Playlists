@@ -29,6 +29,10 @@ unitedplaylists:
   # happen inside the suite. The live probe re-enables them by constructing directly.
   scraper:
     enabled: false
+  # No reaching out to GitHub during the suite.
+  newpipe:
+    auto-update: false
+    cache-dir: ${java.io.tmpdir}/up-test-newpipe
 logging:
   level:
     dev.unitedplaylists: WARN

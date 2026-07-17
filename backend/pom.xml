@@ -106,6 +106,17 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!--
+                      PropertiesLauncher (the ZIP layout) rather than the default
+                      JarLauncher, because it honours -Dloader.path: jars listed there
+                      go on the classpath ahead of the bundled BOOT-INF/lib, so a
+                      downloaded NewPipe extractor shadows the bundled one. That is how
+                      the auto-updater applies a new extractor without a rebuild — see
+                      ExtractorUpdateService.
+                    -->
+                    <layout>ZIP</layout>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>

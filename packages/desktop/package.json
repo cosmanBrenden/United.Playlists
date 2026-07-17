@@ -8,10 +8,13 @@
   "main": "src/main.js",
   "scripts": {
     "dev": "electron .",
-    "build": "echo \"Packaging is wired up once the Castlabs Electron decision is made\" && exit 0",
+    "build": "npm run build --workspace @unitedplaylists/core-ui",
     "test": "node --test src/*.test.js"
   },
   "devDependencies": {
     "electron": "git+https://github.com/castlabs/electron-releases.git#v43.0.0+wvcus"
+  },
+  "dependencies": {
+    "electron-builder": "^26.15.3"
   }
 }

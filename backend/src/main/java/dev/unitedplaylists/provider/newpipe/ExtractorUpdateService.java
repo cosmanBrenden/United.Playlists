@@ -13,7 +13,6 @@ import java.time.Duration;
 import java.util.Comparator;
 import java.util.Optional;
 import java.util.stream.Stream;
-import org.schabi.newpipe.extractor.NewPipe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -58,19 +57,36 @@ public class ExtractorUpdateService {
 
     private final Path cacheDir;
     private final boolean enabled;
+    private final String bundledVersion;
 
-    /** The running extractor's version, and whatever the check last found, for the UI. */
-    private volatile String runningVersion;
+    /** Whatever the check last found, for the UI. */
     private volatile String latestKnownVersion;
     private volatile boolean updateDownloaded;
 
     public ExtractorUpdateService(
             @Value("${unitedplaylists.newpipe.cache-dir:${user.home}/.unitedplaylists/newpipe}")
             String cacheDir,
-            @Value("${unitedplaylists.newpipe.auto-update:true}") boolean enabled) {
+            @Value("${unitedplaylists.newpipe.auto-update:true}") boolean enabled,
+            @Value("${unitedplaylists.newpipe.bundled-version:bundled}") String bundledVersion) {
         this.cacheDir = Path.of(cacheDir);
         this.enabled = enabled;
-        this.runningVersion = readRunningVersion();
+        this.bundledVersion = bundledVersion;
+    }
+
+    /**
+     * The extractor version actually in force.
+     *
+     * <p>Either the bundled one, or a newer cached jar — because the launcher always
+     * applies the newest cached jar over the bundled one at startup. Computed rather
+     * than read from the loaded classes, since a jar loaded via {@code loader.path}
+     * does not carry a readable implementation version.
+     */
+    public String runningVersion() {
+        return newestCachedJar()
+                .map(p -> p.getFileName().toString())
+                .filter(name -> versionRank(name) > versionRank(bundledVersion))
+                .map(this::versionOf)
+                .orElse(versionOf(bundledVersion));
     }
 
     /** Runs shortly after startup, off the main thread so boot is not delayed. */
@@ -129,15 +145,28 @@ public class ExtractorUpdateService {
         try (Stream<Path> files = Files.list(cacheDir)) {
             return files
                     .filter(p -> p.getFileName().toString().endsWith(".jar"))
-                    .max(Comparator.comparing(this::versionOf));
+                    // Numeric, not lexical: a string sort ranks 0.26.10 below 0.26.9.
+                    .max(Comparator.comparingLong(p -> versionRank(p.getFileName().toString())));
         } catch (IOException e) {
             return Optional.empty();
         }
     }
 
+    /** A sortable rank from a version string, so 0.26.10 outranks 0.26.9. */
+    private long versionRank(String s) {
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)").matcher(s);
+        if (!m.find()) {
+            return -1;
+        }
+        return Long.parseLong(m.group(1)) * 1_000_000L
+                + Long.parseLong(m.group(2)) * 1_000L
+                + Long.parseLong(m.group(3));
+    }
+
     public UpdateStatus status() {
         return new UpdateStatus(
-                runningVersion,
+                runningVersion(),
                 latestKnownVersion,
                 updateDownloaded,
                 latestKnownVersion != null && !isAlreadyCurrent(latestKnownVersion));
@@ -193,7 +222,7 @@ public class ExtractorUpdateService {
     private boolean isAlreadyCurrent(String latest) {
         // The running version is either the bundled jar's, or a cached one the launcher
         // applied. Compare on the normalised version string.
-        return versionOf(latest).equals(versionOf(runningVersion));
+        return versionOf(latest).equals(versionOf(runningVersion()));
     }
 
     private Optional<Path> cachedJarFor(String tag) {
@@ -211,11 +240,6 @@ public class ExtractorUpdateService {
         return m.find() ? m.group(1) : s;
     }
 
-    private String readRunningVersion() {
-        Package pkg = NewPipe.class.getPackage();
-        String version = pkg == null ? null : pkg.getImplementationVersion();
-        return version == null ? "bundled" : version;
-    }
 
     /** What the UI needs to show about extractor freshness. */
     public record UpdateStatus(

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/client";
-import type { ImportSummary, ProviderId, ProviderInfo } from "../api/types";
+import type { ExtractorStatus, ImportSummary, ProviderId, ProviderInfo } from "../api/types";
 import { PROVIDER_LABELS } from "../api/types";
 import { ProviderSetupForm } from "./ProviderSetupForm";
 
@@ -31,6 +31,24 @@ export function ConnectionsView({
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   /** Which service's setup form is open, if any. */
   const [editing, setEditing] = useState<ProviderId | null>(null);
+  const [extractor, setExtractor] = useState<ExtractorStatus | null>(null);
+
+  // The scraper providers depend on NewPipe; show its freshness so a user hitting
+  // extraction failures knows whether an update is already waiting.
+  useEffect(() => {
+    let cancelled = false;
+    void client
+      .extractorStatus()
+      .then((status) => {
+        if (!cancelled) setExtractor(status);
+      })
+      .catch(() => {
+        /* non-essential; a missing status is not worth surfacing an error for */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
 
   const connect = async (provider: ProviderId): Promise<void> => {
     setBusy(provider);
@@ -248,6 +266,17 @@ export function ConnectionsView({
         Their tracks simply stop playing until you reconnect. YouTube and SoundCloud need no
         sign-in; search and play them straight away, and import a playlist by pasting its link.
       </p>
+
+      {extractor && (
+        <p className="footnote">
+          YouTube/SoundCloud extractor: {extractor.runningVersion}
+          {extractor.updateDownloaded
+            ? " — an update has been downloaded and applies when you restart the app."
+            : extractor.updateAvailable
+              ? ` — a newer version (${extractor.latestVersion}) is available and will download shortly.`
+              : " — up to date."}
+        </p>
+      )}
     </section>
   );
 }

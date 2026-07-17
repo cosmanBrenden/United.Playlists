@@ -23,6 +23,10 @@
     "backend:test": "cd backend && mvn -B verify"
   },
   "allowScripts": {
-    "electron@43.0.0+wvcus": true
+    "electron@43.0.0+wvcus": true,
+    "electron-builder@26.15.3": true
+  },
+  "dependencies": {
+    "electron-builder": "^26.15.3"
   }
 }

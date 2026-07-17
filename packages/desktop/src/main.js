@@ -11,7 +11,7 @@ import electron, { app, BrowserWindow, ipcMain, shell, safeStorage } from "elect
 const components = electron.components;
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BackendProcess } from "./backend.js";
@@ -72,7 +72,7 @@ selectLinuxPasswordStore();
  * Set explicitly rather than left to `productName`, so the path is decided here and
  * cannot drift when the package is renamed.
  */
-app.setName("UnitedPlaylists");
+app.setName("United.Playlists");
 app.setPath("userData", join(app.getPath("appData"), "UnitedPlaylists"));
 
 /** Explains a missing keychain in terms of what to actually do about it. */
@@ -100,18 +100,34 @@ function keychainHelp(problem) {
 async function loadOrCreateTokenKey() {
   const keyPath = join(app.getPath("userData"), "token.key");
 
-  if (existsSync(keyPath)) {
-    const stored = await readFile(keyPath);
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error(keychainHelp("the saved encryption key cannot be read"));
-    }
-    return safeStorage.decryptString(stored);
-  }
-
-  const key = randomBytes(32).toString("base64");
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error(keychainHelp("your streaming service tokens cannot be protected"));
   }
+
+  if (existsSync(keyPath)) {
+    try {
+      return safeStorage.decryptString(await readFile(keyPath));
+    } catch (cause) {
+      // safeStorage keys its encryption on the OS keychain entry, which is named
+      // after the app. Renaming the app (app.setName) rotates that entry, so a
+      // token.key written under the old name can no longer be decrypted. There is no
+      // recovering the old key, so a fresh one is generated below. The service tokens
+      // in the database were encrypted with the old key and become unreadable — the
+      // backend already handles that by skipping them and prompting a reconnect, so
+      // the cost is re-signing into Spotify, not a broken app.
+      console.warn(
+        `[keychain] Could not decrypt the saved key (${cause.message ?? cause}). ` +
+          "This usually means the app name changed. Generating a new key; you will " +
+          "need to reconnect Spotify. YouTube and SoundCloud are unaffected.",
+      );
+    }
+  }
+
+  return createAndStoreTokenKey(keyPath);
+}
+
+async function createAndStoreTokenKey(keyPath) {
+  const key = randomBytes(32).toString("base64");
   await mkdir(dirname(keyPath), { recursive: true });
   await writeFile(keyPath, safeStorage.encryptString(key), { mode: 0o600 });
   return key;
@@ -129,20 +145,50 @@ function resolveJarPath() {
     : join(process.resourcesPath ?? "", "backend.jar");
 }
 
+/**
+ * The newest NewPipe extractor jar the backend has downloaded, if any.
+ *
+ * The backend fetches updates into this directory; the launcher applies them by
+ * putting the newest one on the classpath ahead of the bundled version. Applying at
+ * launch rather than in the running JVM is deliberate: a compile-time dependency
+ * cannot be hot-swapped, and an extractor update is fine to pick up next session.
+ */
+function newestCachedExtractor(dataDir) {
+  const dir = join(dataDir, "newpipe");
+  if (!existsSync(dir)) {
+    return undefined;
+  }
+  const versionOf = (name) => {
+    const m = /(\d+)\.(\d+)\.(\d+)/.exec(name);
+    return m ? Number(m[1]) * 1e6 + Number(m[2]) * 1e3 + Number(m[3]) : -1;
+  };
+  const jars = readdirSync(dir)
+    .filter((name) => name.endsWith(".jar"))
+    .sort((a, b) => versionOf(b) - versionOf(a));
+  return jars.length > 0 ? join(dir, jars[0]) : undefined;
+}
+
 async function startBackend() {
   const tokenKey = await loadOrCreateTokenKey();
+  const dataDir = app.getPath("userData");
+
+  const loaderPath = newestCachedExtractor(dataDir);
+  if (loaderPath) {
+    console.log(`[backend] using downloaded NewPipe extractor: ${loaderPath}`);
+  }
 
   backend = new BackendProcess({
     javaPath: resolveJavaPath(),
     jarPath: resolveJarPath(),
-    dataDir: app.getPath("userData"),
+    dataDir,
     tokenKey,
+    loaderPath,
     extraEnv: {
       UP_REDIRECT_URI: OAUTH_REDIRECT,
-      // Supplied by the packager or the developer's environment. Absent, the
-      // provider reports itself unavailable rather than failing at connect time.
+      // Supplied by the packager or the developer's environment. Absent, Spotify
+      // reports itself unavailable rather than failing at connect time. YouTube and
+      // SoundCloud need nothing here — they are scraped anonymously.
       UP_SPOTIFY_CLIENT_ID: process.env.UP_SPOTIFY_CLIENT_ID ?? "",
-      UP_YOUTUBE_CLIENT_ID: process.env.UP_YOUTUBE_CLIENT_ID ?? "",
     },
   });
 

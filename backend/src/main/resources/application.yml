@@ -80,6 +80,15 @@ unitedplaylists:
 
   # YouTube and SoundCloud need no configuration: they are reached anonymously through
   # NewPipe's extractor, with no API key, OAuth, or account.
+  newpipe:
+    # Extractor updates land here, in the same data dir as the database so the Electron
+    # launcher can find them and put the newest on the classpath at the next start.
+    cache-dir: ${UP_DATA_DIR:${user.home}/.unitedplaylists}/newpipe
+    auto-update: true
+    # The version compiled in, for update comparisons. Keep in step with the
+    # <newpipe.version> in pom.xml — the running JVM cannot read a loader.path jar's
+    # own version, so this is the reference point.
+    bundled-version: v0.26.3
 
 springdoc:
   swagger-ui:

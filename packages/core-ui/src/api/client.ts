@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  ExtractorStatus,
   ImportSummary,
   PlaybackTicket,
   Playlist,
@@ -222,6 +223,11 @@ export class ApiClient {
   async playbackTicket(trackKey: string): Promise<PlaybackTicket> {
     const params = new URLSearchParams({ trackKey });
     return this.#request<PlaybackTicket>("GET", `/api/v1/playback/ticket?${params}`);
+  }
+
+  /** NewPipe extractor version and whether an update has been downloaded. */
+  async extractorStatus(): Promise<ExtractorStatus> {
+    return this.#request<ExtractorStatus>("GET", "/api/v1/extractor/status");
   }
 
   async #request<T>(method: string, path: string, body?: unknown): Promise<T> {

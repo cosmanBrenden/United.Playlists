@@ -152,6 +152,17 @@ export interface ImportSummary {
   readonly imported: readonly Playlist[];
 }
 
+export interface ExtractorStatus {
+  /** The NewPipe version in force (the newest downloaded, or the bundled one). */
+  readonly runningVersion: string;
+  /** The latest version seen on GitHub, or null if not yet checked. */
+  readonly latestVersion: string | null;
+  /** A newer jar has been downloaded and will apply on the next restart. */
+  readonly updateDownloaded: boolean;
+  /** A newer version exists than the one running. */
+  readonly updateAvailable: boolean;
+}
+
 export interface ApiErrorBody {
   readonly error: string;
   readonly message: string;

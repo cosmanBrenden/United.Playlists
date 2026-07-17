@@ -132,7 +132,7 @@ These are reached through [NewPipeExtractor](https://github.com/TeamNewPipeExtra
 - **No API keys, no OAuth, no quota, no tokens to expire.** They are usable the moment the app starts — search and play with nothing set up.
 - **Real audio streams.** The backend resolves a direct stream URL, played by a plain `<audio>` element. No embedded player, no DRM.
 - **No account access.** Anonymous scraping cannot read your YouTube or SoundCloud playlists. Import a public or unlisted playlist by pasting its URL instead.
-- **It breaks when the sites change.** Scraping is inherently brittle; NewPipe ships fixes constantly, and the bundled extractor version (`newpipe.version` in `backend/pom.xml`) needs bumping to keep pace. Extraction failures report "the extractor may need updating".
+- **It breaks when the sites change — and updates itself.** Scraping is brittle; NewPipe ships fixes constantly. The app checks GitHub for a newer NewPipeExtractor release on startup and daily, downloads it to `<userData>/newpipe/`, and applies it on the next launch: the Electron shell puts the newest jar ahead of the bundled one on the classpath via Spring Boot's `loader.path`, so it shadows the compiled-in version with no rebuild. (A compile-time dependency can't be hot-swapped in a running JVM, hence "apply on next launch".) The Services screen shows the running version and whether an update is waiting; a fresh check is `POST /api/v1/extractor/check`. The bundled fallback is `newpipe.version` in `backend/pom.xml` (mirror it in `unitedplaylists.newpipe.bundled-version`). Disable with `unitedplaylists.newpipe.auto-update: false`.
 - **It violates YouTube's and SoundCloud's terms of service**, and rules out distribution through an app store.
 
 ## Known limits

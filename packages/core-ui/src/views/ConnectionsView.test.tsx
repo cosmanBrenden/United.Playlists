@@ -36,8 +36,10 @@ describe("ConnectionsView", () => {
     completeAuthorization: ReturnType<typeof vi.fn>;
     disconnect: ReturnType<typeof vi.fn>;
     importPlaylists: ReturnType<typeof vi.fn>;
+    importPlaylistByUrl: ReturnType<typeof vi.fn>;
     saveSetup: ReturnType<typeof vi.fn>;
     clearSetup: ReturnType<typeof vi.fn>;
+    extractorStatus: ReturnType<typeof vi.fn>;
   };
   let authorize: ReturnType<typeof vi.fn>;
   let onChanged: ReturnType<typeof vi.fn>;
@@ -48,8 +50,11 @@ describe("ConnectionsView", () => {
       completeAuthorization: vi.fn(),
       disconnect: vi.fn(),
       importPlaylists: vi.fn(),
+      importPlaylistByUrl: vi.fn(),
       saveSetup: vi.fn(),
       clearSetup: vi.fn(),
+      // Non-essential UI extra; default to a never-resolving promise so it stays inert.
+      extractorStatus: vi.fn(() => new Promise(() => {})),
     };
     authorize = vi.fn();
     onChanged = vi.fn();
@@ -335,6 +340,90 @@ describe("ConnectionsView", () => {
 
       await waitFor(() => {
         expect(screen.getByRole("alert")).toHaveTextContent("YouTube also needs a client secret");
+      });
+    });
+  });
+
+  describe("scraper services (no sign-in)", () => {
+    const youtube = provider({
+      id: "YOUTUBE",
+      displayName: "YouTube",
+      requiresAuthentication: false,
+      setupSupported: false,
+      setup: null,
+    });
+
+    it("shows a scraper service as ready, with no connect button", () => {
+      renderView([youtube]);
+
+      expect(screen.getByText(/Ready — no sign-in needed/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Import by URL/ })).toBeEnabled();
+    });
+
+    it("imports a playlist from a pasted URL", async () => {
+      client.importPlaylistByUrl.mockResolvedValue({
+        provider: "YOUTUBE",
+        importedCount: 1,
+        trackCount: 100,
+        alreadyPresent: 0,
+        unreadable: 0,
+        imported: [],
+      });
+      renderView([youtube]);
+
+      await userEvent.click(screen.getByRole("button", { name: /Import by URL/ }));
+      await userEvent.type(
+        screen.getByLabelText(/Playlist URL/),
+        "https://www.youtube.com/playlist?list=PLabc",
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Import" }));
+
+      await waitFor(() => {
+        expect(client.importPlaylistByUrl).toHaveBeenCalledWith(
+          "YOUTUBE",
+          "https://www.youtube.com/playlist?list=PLabc",
+        );
+      });
+      expect(screen.getByRole("status")).toHaveTextContent(/Imported 1 playlist \(100 tracks\)/);
+    });
+
+    it("does not offer a scraper service a credentials form", async () => {
+      renderView([youtube]);
+
+      await userEvent.click(screen.getByRole("button", { name: /Import by URL/ }));
+
+      expect(screen.queryByLabelText(/Client ID/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/Playlist URL/)).toBeInTheDocument();
+    });
+  });
+
+  describe("extractor freshness", () => {
+    it("says when an update has been downloaded", async () => {
+      client.extractorStatus.mockResolvedValue({
+        runningVersion: "0.26.3",
+        latestVersion: "v0.27.0",
+        updateDownloaded: true,
+        updateAvailable: true,
+      });
+      renderView([]);
+
+      await waitFor(() => {
+        expect(screen.getByText(/applies when you restart/)).toBeInTheDocument();
+      });
+    });
+
+    it("says up to date when there is nothing newer", async () => {
+      client.extractorStatus.mockResolvedValue({
+        runningVersion: "0.26.3",
+        latestVersion: "v0.26.3",
+        updateDownloaded: false,
+        updateAvailable: false,
+      });
+      renderView([]);
+
+      await waitFor(() => {
+        expect(screen.getByText(/up to date/)).toBeInTheDocument();
       });
     });
   });

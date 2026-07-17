@@ -114,7 +114,7 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
   return (
     <div className="app">
       <nav className="sidebar">
-        <h1 className="brand">UnitedPlaylists</h1>
+        <h1 className="brand">United.Playlists</h1>
 
         <div className="tabs">
           <button type="button" onClick={() => setTab("playlists")} aria-pressed={tab === "playlists"}>

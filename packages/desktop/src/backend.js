@@ -32,13 +32,15 @@ export class BackendProcess {
    * @param {string} options.jarPath   path to the backend jar
    * @param {string} options.dataDir   where the database lives
    * @param {string} options.tokenKey  base64 AES key for token encryption at rest
+   * @param {string} [options.loaderPath]  a downloaded NewPipe jar to prefer over the bundled one
    * @param {Record<string, string>} [options.extraEnv]
    */
-  constructor({ javaPath, jarPath, dataDir, tokenKey, extraEnv = {} }) {
+  constructor({ javaPath, jarPath, dataDir, tokenKey, loaderPath, extraEnv = {} }) {
     this.javaPath = javaPath;
     this.jarPath = jarPath;
     this.dataDir = dataDir;
     this.tokenKey = tokenKey;
+    this.loaderPath = loaderPath;
     this.extraEnv = extraEnv;
   }
 
@@ -55,9 +57,19 @@ export class BackendProcess {
   async start() {
     const apiToken = BackendProcess.generateApiToken();
 
+    const javaArgs = [];
+    // A downloaded NewPipe extractor, if any, goes ahead of the bundled one. The jar
+    // uses Spring Boot's PropertiesLauncher, which reads loader.path and puts these
+    // jars first on the classpath, so their classes shadow the bundled BOOT-INF/lib
+    // copy. This is how an extractor update applies without a rebuild.
+    if (this.loaderPath) {
+      javaArgs.push(`-Dloader.path=${this.loaderPath}`);
+    }
+    javaArgs.push("-jar", this.jarPath);
+
     this.#child = spawn(
       this.javaPath,
-      ["-jar", this.jarPath],
+      javaArgs,
       {
         env: {
           ...process.env,
