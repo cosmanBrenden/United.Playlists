@@ -12,10 +12,13 @@ const components = electron.components;
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BackendProcess } from "./backend.js";
 import { awaitOAuthCallback } from "./oauth-callback.js";
+import { parseJavaMajor, javaMissingMessage, javaVersionProblem } from "./java-runtime.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -133,10 +136,57 @@ async function createAndStoreTokenKey(keyPath) {
   return key;
 }
 
+const execFileAsync = promisify(execFile);
+
 function resolveJavaPath() {
-  // A packaged build bundles a trimmed JRE, so the user needs no Java installed.
+  // A packaged build may ship a bundled JRE under resources/jre; if present it is
+  // used so the machine needs no Java installed. Otherwise the app relies on a
+  // system Java on PATH (verified by verifyJava below).
   const bundled = join(process.resourcesPath ?? "", "jre", "bin", process.platform === "win32" ? "java.exe" : "java");
   return !isDev && existsSync(bundled) ? bundled : "java";
+}
+
+/**
+ * Confirms a usable Java is on PATH before the backend is spawned.
+ *
+ * When no JRE is bundled the app depends on the user's own Java. A missing or
+ * too-old runtime otherwise surfaces as the backend "exiting before it was ready"
+ * with an opaque JVM error; this turns it into a plain instruction to install
+ * Java 21. The version arithmetic and wording live in java-runtime.js so they can
+ * be tested without Electron.
+ *
+ * @param {string} javaPath
+ */
+async function verifyJava(javaPath) {
+  // A bundled JRE is validated at build time, not here.
+  if (javaPath !== "java") {
+    return;
+  }
+
+  let output;
+  try {
+    // `java -version` prints to stderr on every JDK; capture both streams.
+    const result = await execFileAsync(javaPath, ["-version"]);
+    output = `${result.stdout}${result.stderr}`;
+  } catch (cause) {
+    if (cause?.code === "ENOENT") {
+      throw new Error(javaMissingMessage());
+    }
+    throw new Error(`Could not run Java: ${cause?.message ?? cause}`);
+  }
+
+  const major = parseJavaMajor(output);
+  const problem = javaVersionProblem(major);
+  if (problem) {
+    throw new Error(problem);
+  }
+  if (major === null) {
+    // Unrecognised output, but java ran — let the backend try rather than block on
+    // a parsing quirk.
+    console.warn(`[java] could not parse version from: ${output.trim()}`);
+    return;
+  }
+  console.log(`[java] using system Java ${major} (${javaPath})`);
 }
 
 function resolveJarPath() {
@@ -169,6 +219,9 @@ function newestCachedExtractor(dataDir) {
 }
 
 async function startBackend() {
+  const javaPath = resolveJavaPath();
+  await verifyJava(javaPath);
+
   const tokenKey = await loadOrCreateTokenKey();
   const dataDir = app.getPath("userData");
 
@@ -178,7 +231,7 @@ async function startBackend() {
   }
 
   backend = new BackendProcess({
-    javaPath: resolveJavaPath(),
+    javaPath,
     jarPath: resolveJarPath(),
     dataDir,
     tokenKey,

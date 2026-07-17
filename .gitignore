@@ -1,0 +1,32 @@
+# Build output
+target/
+dist/
+build/
+node_modules/
+*.jar
+
+# Packaged installers (electron-builder output)
+release/
+
+# Local data: the H2 database holds encrypted OAuth tokens and must never be committed
+*.mv.db
+*.trace.db
+/data/
+
+# Secrets. Client IDs are public by design (PKCE), but nothing else here is.
+.env
+.env.*
+!.env.example
+*.key
+*.p8
+
+# Editors and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

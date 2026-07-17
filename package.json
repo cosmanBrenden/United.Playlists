@@ -4,7 +4,9 @@
   "private": true,
   "description": "Create and listen to playlists using songs from different music streaming services",
   "license": "GPL-3.0-or-later",
+  "author": "UnitedPlaylists contributors",
   "type": "module",
+  "main": "packages/desktop/src/main.js",
   "workspaces": [
     "packages/core-ui",
     "packages/desktop"
@@ -20,13 +22,76 @@
     "lint": "npm run lint --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
     "backend:build": "cd backend && mvn -B package -DskipTests",
-    "backend:test": "cd backend && mvn -B verify"
+    "backend:test": "cd backend && mvn -B verify",
+    "dist:prepare": "npm run build --workspace @unitedplaylists/core-ui && npm run backend:build",
+    "dist": "npm run dist:prepare && electron-builder",
+    "dist:dir": "npm run dist:prepare && electron-builder --dir",
+    "dist:linux": "npm run dist:prepare && electron-builder --linux",
+    "dist:win": "npm run dist:prepare && electron-builder --win",
+    "dist:mac": "npm run dist:prepare && electron-builder --mac"
   },
   "allowScripts": {
     "electron@43.0.0+wvcus": true,
     "electron-builder@26.15.3": true
   },
-  "dependencies": {
+  "build": {
+    "appId": "dev.unitedplaylists.app",
+    "productName": "UnitedPlaylists",
+    "copyright": "Copyright © 2026 UnitedPlaylists contributors",
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "electronVersion": "43.0.0",
+    "afterPack": "packaging/afterPack.cjs",
+    "directories": {
+      "output": "release",
+      "buildResources": "packaging"
+    },
+    "files": [
+      "packages/desktop/src/**/*",
+      "!packages/desktop/src/**/*.test.js",
+      "packages/core-ui/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/target/backend-0.1.0-SNAPSHOT.jar",
+        "to": "backend.jar"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.music",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Audio",
+      "maintainer": "UnitedPlaylists contributors",
+      "synopsis": "Unite playlists across streaming services",
+      "artifactName": "${productName}-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
     "electron-builder": "^26.15.3"
   }
 }
