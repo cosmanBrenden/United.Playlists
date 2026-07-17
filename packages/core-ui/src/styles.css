@@ -1,0 +1,425 @@
+:root {
+  --bg: #0f1115;
+  --bg-raised: #171a21;
+  --border: #262b36;
+  --text: #e8eaed;
+  --text-dim: #9aa3b2;
+  --accent: #6c9fff;
+  --danger: #ff6b6b;
+  --warning: #ffcc66;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Sidebar, scrolling content, fixed transport bar. */
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 1fr auto;
+  grid-template-areas:
+    "sidebar content"
+    "player player";
+  height: 100vh;
+}
+
+.sidebar {
+  grid-area: sidebar;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.content {
+  grid-area: content;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.player-bar {
+  grid-area: player;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+}
+
+.brand {
+  font-size: 1.1rem;
+  margin: 0 0 1rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+button {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06101f;
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.new-playlist {
+  width: 100%;
+  margin-bottom: 0.75rem;
+}
+
+.playlist-list,
+.track-list,
+.provider-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.playlist-list button {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+  background: transparent;
+  border-color: transparent;
+}
+
+.count {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.view-header h2 {
+  margin: 0 0 0.25rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.subtitle,
+.meta {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 0.15rem 0;
+}
+
+.origin-note {
+  max-width: 46ch;
+}
+
+.search-input {
+  flex: 1;
+  max-width: 26rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.track-row,
+.provider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.track-row:hover {
+  background: var(--bg-raised);
+}
+
+.position {
+  width: 1.5rem;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.artwork {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.artwork-placeholder {
+  background: var(--border);
+}
+
+/* The one flexible column, so long titles truncate rather than shoving the
+   controls off the row. */
+.track-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.track-title,
+.track-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-artist {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.duration {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.service-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  color: #fff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.add-select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.status {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.status.warning {
+  color: var(--warning);
+  background: rgba(255, 204, 102, 0.08);
+  border: 1px solid rgba(255, 204, 102, 0.25);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+}
+
+.status.warning ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.provider-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.provider-item .provider-row {
+  border-bottom: none;
+  justify-content: space-between;
+}
+
+.provider-meta {
+  display: flex;
+  flex-direction: column;
+  /* The reason text is the widest thing in the row; let it wrap rather than
+     squeeze the buttons off the end. */
+  flex: 1;
+  min-width: 0;
+  padding-right: 1rem;
+}
+
+.provider-note {
+  max-width: 60ch;
+}
+
+.provider-warning {
+  color: var(--warning);
+  font-size: 0.75rem;
+  max-width: 60ch;
+  margin-top: 0.25rem;
+}
+
+.provider-warning code {
+  background: rgba(255, 204, 102, 0.12);
+  padding: 0 0.2rem;
+  border-radius: 3px;
+}
+
+.setup-form {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 0 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.setup-form h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.setup-steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.setup-steps li {
+  margin-bottom: 0.25rem;
+}
+
+.setup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.setup-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.setup-field input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+
+.setup-field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.setup-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.redirect-uri {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.setup-hint {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-style: normal;
+}
+
+.setup-console-link {
+  align-self: flex-start;
+}
+
+.setup-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.provider-account,
+.provider-note {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.footnote {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  margin-top: 1.5rem;
+  max-width: 60ch;
+}
+
+.player-track {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.player-controls {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.player-extra {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.player-extra input[type="range"] {
+  width: 6rem;
+}

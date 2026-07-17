@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The page runs Spotify's SDK next to the user's tokens, so it is locked down to
+      what that needs plus the audio streaming below:
+        script-src  - only the Spotify SDK
+        connect-src - the local backend and Spotify's API
+        media-src   - Spotify streams blob: URLs; the scraper services stream real
+                      audio from many rotating CDN hosts (googlevideo, sndcdn, …),
+                      which cannot be enumerated, so https: is allowed for media only
+        img-src     - artwork from each service's image CDN
+      No 'unsafe-eval'. YouTube's iframe and script are gone: playback is now a plain
+      <audio> element, so there is no third-party player frame to allow.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self' https://sdk.scdn.co;
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: https: ;
+        media-src 'self' blob: https: ;
+        connect-src 'self' http://127.0.0.1:* https://api.spotify.com https://spclient.wg.spotify.com;
+        frame-src https://sdk.scdn.co https://open.spotify.com;
+        object-src 'none';
+        base-uri 'none';
+      "
+    />
+    <title>UnitedPlaylists</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

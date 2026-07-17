@@ -1,0 +1,17 @@
+{
+  "name": "@unitedplaylists/desktop",
+  "productName": "UnitedPlaylists",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell: runs the Java backend and hosts the shared UI core",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "echo \"Packaging is wired up once the Castlabs Electron decision is made\" && exit 0",
+    "test": "node --test src/*.test.js"
+  },
+  "devDependencies": {
+    "electron": "git+https://github.com/castlabs/electron-releases.git#v43.0.0+wvcus"
+  }
+}

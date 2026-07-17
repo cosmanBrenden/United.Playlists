@@ -1,0 +1,28 @@
+{
+  "name": "unitedplaylists",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Create and listen to playlists using songs from different music streaming services",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "workspaces": [
+    "packages/core-ui",
+    "packages/desktop"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @unitedplaylists/desktop",
+    "test": "npm run test --workspace @unitedplaylists/core-ui",
+    "test:coverage": "npm run test:coverage --workspace @unitedplaylists/core-ui",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "backend:build": "cd backend && mvn -B package -DskipTests",
+    "backend:test": "cd backend && mvn -B verify"
+  },
+  "allowScripts": {
+    "electron@43.0.0+wvcus": true
+  }
+}
