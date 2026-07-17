@@ -63,7 +63,8 @@ Tests:
   npm run backend:test           # == cd backend && mvn -B verify  (~260 tests)
   npm test                       # core-ui vitest (~92 tests)
   (cd packages/core-ui && npx tsc --noEmit)               # typecheck
-  (cd packages/desktop && node --test src/oauth-callback.test.js)   # 9 tests
+  (cd packages/desktop && node --test src/*.test.js)      # 16 tests (oauth-callback,
+                                                          #   backend, java-runtime)
   (cd packages/core-ui && npx vitest run --coverage)      # coverage
 
 Build the renderer bundle (what packaged Electron loads from core-ui/dist):
@@ -71,6 +72,12 @@ Build the renderer bundle (what packaged Electron loads from core-ui/dist):
   # desktop `build` script just delegates to this — the Electron shell is plain JS,
   # nothing to bundle. (See hiccup #12: it USED to wrongly run `vite build` in
   # packages/desktop, which fails — there's no index.html there.)
+
+Build installers (renderer + backend jar + Electron shell -> release/):
+  npm run dist                   # installer for the host OS
+  npm run dist:linux|:win|:mac   # a specific OS (build each on that OS / in CI)
+  # Config is the root package.json "build" field; the app needs Java 21 on PATH
+  # (no JRE bundled). Full details in PACKAGING.md.
 
 Live/manual probes (network, disabled in CI — run by hand):
   cd backend && mvn -B test -Dtest=NewPipeLiveProbeTest -Dnewpipe.live=true
@@ -302,11 +309,18 @@ Frontend (packages/core-ui/src/):
   App.tsx, main.tsx (bootstrap; reads backend info from the Electron bridge)
 
 Desktop (packages/desktop/src/):
-  main.js        Electron main: password-store, Widevine, token.key, spawn backend
-                 (with loader.path for extractor updates), OAuth loopback, IPC
+  main.js        Electron main: password-store, Widevine, token.key, verifyJava,
+                 spawn backend (with loader.path for extractor updates), OAuth
+                 loopback, IPC
   backend.js     BackendProcess: spawns java, reads chosen port from stdout
+  java-runtime.js  pure Java-version helpers (parse/compare) used by main.js's
+                 startup check; unit-tested without Electron
   oauth-callback.js   one-shot loopback listener for the OAuth redirect
   preload.cjs    the 4-call bridge exposed to the renderer
+
+Packaging (root):
+  packaging/afterPack.cjs   electron-builder hook: best-effort Castlabs VMP signing
+  package.json "build"      electron-builder config (targets, backend.jar resource)
 
 
 6. GOTCHAS FOR THE NEXT SESSION
