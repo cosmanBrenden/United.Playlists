@@ -124,6 +124,22 @@ button.danger:hover:not(:disabled) {
   border-color: transparent;
 }
 
+/* The selected playlist needs its own rule: the generic
+   button[aria-pressed="true"] darkens the text for its accent fill, but
+   ".playlist-list button" (equal specificity, declared later) resets the
+   background to transparent — leaving dark text on the dark sidebar. Restore
+   the accent fill here at higher specificity so the name stays legible. */
+.playlist-list button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06101f;
+}
+
+.playlist-list button[aria-pressed="true"] .count {
+  color: #06101f;
+  opacity: 0.7;
+}
+
 .count {
   color: var(--text-dim);
   font-size: 0.75rem;
@@ -253,6 +269,98 @@ button.danger:hover:not(:disabled) {
 
 .status.error {
   color: var(--danger);
+}
+
+/* Floating confirmation that a search result was added to a playlist. Fixed to
+   the lower-right, above the player bar, and it slides in then eases away. */
+.toast {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 5rem;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  max-width: 22rem;
+  padding: 0.7rem 1rem;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #06101f;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  animation: toast-in 0.22s ease-out;
+}
+
+.toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: rgba(6, 16, 31, 0.18);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+/* Row above the results holding the sort control. */
+.search-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.sort-select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.8rem;
+}
+
+.sort-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.sort-direction {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.sort-direction span {
+  font-size: 0.9rem;
+  line-height: 1;
 }
 
 .status.warning {

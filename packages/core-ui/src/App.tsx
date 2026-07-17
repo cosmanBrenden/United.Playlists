@@ -202,7 +202,14 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
             client={client}
             playlists={playlists}
             onPlay={playTrack}
-            onTrackAdded={() => void refreshPlaylists()}
+            onTrackAdded={(updated) => {
+              void refreshPlaylists();
+              // Keep the open playlist in sync so its new track shows without
+              // reselecting; addTrack returns the full playlist with entries.
+              if (updated.id === selectedId) {
+                setSelected(updated);
+              }
+            }}
           />
         )}
 

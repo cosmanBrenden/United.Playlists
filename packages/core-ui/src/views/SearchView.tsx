@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/client";
 import type { Playlist, SearchResponse, Track } from "../api/types";
@@ -11,6 +11,77 @@ import { ServiceBadge } from "../components/ServiceBadge";
  * so typing is debounced rather than sent live.
  */
 const SEARCH_DEBOUNCE_MS = 450;
+
+/** How long the "added to playlist" confirmation stays up before fading out. */
+const ADDED_NOTICE_MS = 2500;
+
+/**
+ * Ways to order search results. "relevance" keeps the backend's own ranking
+ * (best matches first); the rest are client-side re-sorts of that same set.
+ * There is deliberately no "date" option: search results carry no date — only
+ * imported playlist entries do.
+ */
+type SortKey = "relevance" | "title" | "artist" | "service" | "duration";
+
+/** Ascending or descending; ignored for "relevance", which has no direction. */
+type SortDirection = "asc" | "desc";
+
+const SORT_LABELS: Readonly<Record<SortKey, string>> = {
+  relevance: "Relevance",
+  title: "Title",
+  artist: "Artist",
+  service: "Service",
+  duration: "Duration",
+};
+
+/**
+ * The direction toggle's label, phrased for the field it applies to — "A–Z"
+ * reads naturally for text but not for duration, where "Shortest/Longest" is
+ * clearer.
+ */
+function directionLabel(sort: SortKey, direction: SortDirection): string {
+  if (sort === "duration") {
+    return direction === "asc" ? "Shortest first" : "Longest first";
+  }
+  return direction === "asc" ? "A–Z" : "Z–A";
+}
+
+/**
+ * The ascending comparator for a field. Descending is this negated, so each
+ * comparator is written once. Case-insensitive and locale-aware for text;
+ * tracks with no duration sort last (ascending).
+ */
+function ascendingComparator(sort: Exclude<SortKey, "relevance">): (a: Track, b: Track) => number {
+  switch (sort) {
+    case "title":
+      return (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+    case "artist":
+      return (a, b) => a.artistLine.localeCompare(b.artistLine, undefined, { sensitivity: "base" });
+    case "service":
+      return (a, b) => PROVIDER_LABELS[a.provider].localeCompare(PROVIDER_LABELS[b.provider]);
+    case "duration":
+      return (a, b) => (a.durationMs ?? Infinity) - (b.durationMs ?? Infinity);
+  }
+}
+
+/**
+ * Returns results ordered by the chosen key and direction. "relevance" is the
+ * identity order, so the backend's ranking is preserved (direction does not
+ * apply). The others sort a copy — never mutating the response — flipping the
+ * ascending comparator's sign for a descending sort.
+ */
+function sortResults(
+  results: readonly Track[],
+  sort: SortKey,
+  direction: SortDirection,
+): readonly Track[] {
+  if (sort === "relevance") {
+    return results;
+  }
+  const ascending = ascendingComparator(sort);
+  const sign = direction === "asc" ? 1 : -1;
+  return [...results].sort((a, b) => sign * ascending(a, b));
+}
 
 export interface SearchViewProps {
   readonly client: ApiClient;
@@ -30,9 +101,16 @@ export function SearchView({
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addingKey, setAddingKey] = useState<string | null>(null);
+  const [addedNotice, setAddedNotice] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortKey>("relevance");
+  const [direction, setDirection] = useState<SortDirection>("asc");
 
   // Lets a slow earlier search be discarded when a newer one has already returned.
   const requestSeq = useRef(0);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Clear the pending confirmation timer if the view unmounts mid-notice.
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
   const runSearch = useCallback(
     async (text: string): Promise<void> => {
@@ -78,6 +156,10 @@ export function SearchView({
     try {
       const updated = await client.addTrack(playlistId, track);
       onTrackAdded?.(updated);
+      // Confirm the add: without this there was no sign the track landed anywhere.
+      clearTimeout(noticeTimer.current);
+      setAddedNotice(`Added “${track.title}” to ${updated.name}`);
+      noticeTimer.current = setTimeout(() => setAddedNotice(null), ADDED_NOTICE_MS);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not add the track");
     } finally {
@@ -85,7 +167,10 @@ export function SearchView({
     }
   };
 
-  const results = response?.results ?? [];
+  const results = useMemo(
+    () => sortResults(response?.results ?? [], sort, direction),
+    [response, sort, direction],
+  );
 
   return (
     <section className="view search-view">
@@ -100,6 +185,51 @@ export function SearchView({
           onChange={(event) => setQuery(event.target.value)}
         />
       </header>
+
+      {(response?.results.length ?? 0) > 0 && (
+        <div className="search-toolbar">
+          <label className="sort-control">
+            <span>Sort by</span>
+            <select
+              className="sort-select"
+              value={sort}
+              onChange={(event) => setSort(event.target.value as SortKey)}
+            >
+              {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
+                <option key={key} value={key}>
+                  {SORT_LABELS[key]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* Relevance is the backend's own ranking, which has no ascending or
+              descending sense, so the toggle only appears for the real fields. */}
+          {sort !== "relevance" && (
+            <button
+              type="button"
+              className="sort-direction"
+              aria-label={`Sort direction: ${directionLabel(sort, direction)}`}
+              title={`Sort direction: ${directionLabel(sort, direction)}`}
+              onClick={() => setDirection((d) => (d === "asc" ? "desc" : "asc"))}
+            >
+              <span aria-hidden="true">{direction === "asc" ? "↑" : "↓"}</span>
+              {directionLabel(sort, direction)}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Transient confirmation that a track was added — a floating toast, polite
+          so a screen reader announces it without stealing focus. */}
+      {addedNotice && (
+        <div className="toast" role="status" aria-live="polite">
+          <span className="toast-icon" aria-hidden="true">
+            ✓
+          </span>
+          {addedNotice}
+        </div>
+      )}
 
       {searching && <p className="status">Searching…</p>}
       {error && <p className="status error" role="alert">{error}</p>}
