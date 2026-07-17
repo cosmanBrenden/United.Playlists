@@ -199,6 +199,15 @@ Handy env vars the backend reads (Electron sets most):
     newpipe.auto-update=false so the suite never hits the network. Live behavior is in
     the hand-run NewPipeLiveProbeTest.
 
+#17 window.prompt / window.alert / window.confirm ARE DISABLED IN ELECTRON. They
+    silently return null (prompt) or do nothing — no error, no dialog. The old
+    "+ New playlist" button called window.prompt for the name, so on desktop it
+    looked like playlist creation was simply missing ("users can only import"). The
+    backend create endpoint had worked all along. Fix: a real in-app modal
+    (components/CreatePlaylistDialog). RULE: never reach for the window.* dialogs in
+    the renderer — build a component, or (for a truly native dialog) go through the
+    Electron main process via the preload bridge.
+
 
 3. KEY DESIGN DECISIONS (the "why", so you don't undo them)
 -----------------------------------------------------------
@@ -241,13 +250,41 @@ Handy env vars the backend reads (Electron sets most):
   SDK; DirectAudioAdapter = <audio> for YT/SC). Facade swaps adapters mid-playlist so
   a mixed playlist "just works". Adding a service = one adapter.
 
+  The facade owns everything the UI treats as "the player": transport, the QUEUE
+  (setQueue + playQueueItem + moveInQueue/removeFromQueue/addToQueue, all keeping the
+  playing-track index correct through edits), SHUFFLE (playShuffled + setShuffle,
+  Fisher-Yates, single up-front shuffle — reshuffles only the tracks still AHEAD so
+  the current one keeps playing), PROGRESS (position/buffered/duration polled once a
+  second via refreshProgress, only while playing), and NEXT-TRACK PREFETCH. Queue +
+  index + shuffle live in PlayerState, so the transport bar and the queue panel are
+  just subscribers — no separate store.
+
+  ADAPTER CONTRACT additions the facade relies on:
+    - getBufferedMs()/getDurationMs(): drive the progress bar's "loaded ahead" span
+      and the real (not metadata-estimate) duration. Spotify returns null for
+      buffered on purpose — the Web Playback SDK exposes no buffer window, so the UI
+      HIDES that layer rather than inventing one. DirectAudio reads audio.buffered
+      (the contiguous range covering the play head) and audio.duration.
+    - prepare(ticket) [OPTIONAL, best-effort, must never throw]: pre-load the next
+      track. The facade fetches the NEXT track's ticket as soon as the current one
+      starts, caches it (keyed by track so a queue edit discards a stale prefetch),
+      and calls prepare(). DirectAudioAdapter pre-loads the stream into a SECOND
+      <audio> element and promotes it on play instead of reloading — this is what
+      makes YT/SC track-to-track transitions near-seamless. Spotify no-ops (its SDK
+      can only play "now", not warm a specific next URI). On advance the facade reuses
+      the cached ticket, skipping the network round-trip.
+
 
 4. ROADMAP / WHAT'S LEFT
 ------------------------
-Done: playlists (create/edit/reorder/delete, mixed-service), Spotify (OAuth + import
-  + search + playback via Web Playback SDK), YouTube + SoundCloud (scraped search +
-  import-by-URL + direct-audio playback), in-app credential entry, extractor
-  auto-update, all the security hardening above.
+Done: playlists (create via in-app modal / edit / reorder / delete, mixed-service),
+  Spotify (OAuth + import + search + playback via Web Playback SDK), YouTube +
+  SoundCloud (scraped search + import-by-URL + direct-audio playback), in-app
+  credential entry, extractor auto-update, all the security hardening above.
+  PLAYER UX: seekable progress bar with a buffered indicator, shuffle (per-playlist
+  + a transport toggle), an editable queue panel (jump / reorder / remove), and
+  next-track pre-buffering for smoother same-service transitions. See the PLAYER
+  FACADE design note above for how these hang together.
 
 Not done / next:
   1. APPLE MUSIC — stubbed (AppleMusicProvider throws, isSetupSupported=false). Needs
@@ -268,7 +305,13 @@ Not done / next:
   3. MOBILE — core-ui is deliberately shell-agnostic; Capacitor could wrap it. But
      mobile playback needs native Spotify/MusicKit SDK plugins, and a hosted backend
      becomes a real conversation (tokens can't just live on-device the same way).
-  4. GAPLESS PLAYBACK across services — swapping SDKs mid-playlist has an audible gap.
+  4. GAPLESS PLAYBACK across services — next-track PREFETCH now warms the upcoming
+     track (DirectAudioAdapter pre-loads it into a second <audio>), so YT/SC ->
+     YT/SC transitions are near-seamless. Two gaps remain: (a) crossing SDKs
+     (Spotify <-> DirectAudio) still swaps adapters and has an audible gap — Spotify's
+     SDK can't be pre-warmed for a specific next URI; (b) even same-service is
+     "near-instant", not sample-accurate gapless (that needs Web Audio crossfade /
+     MediaSource, a bigger job).
   5. YOUTUBE MUSIC (not just YouTube) — no public API; NewPipe reaches YouTube proper,
      not the YT Music premium catalog.
   6. Nice-to-haves: playlist reordering across services already works; could add
@@ -303,9 +346,18 @@ Not done / next:
 
 Frontend (packages/core-ui/src/):
   api/           client.ts (typed backend client), types.ts
-  player/        Player.ts (facade), SpotifyAdapter.ts, DirectAudioAdapter.ts, types.ts
-  views/         SearchView, PlaylistView, ConnectionsView, ProviderSetupForm
-  components/    PlayerBar, ServiceBadge
+  player/        Player.ts (facade: transport + queue + shuffle + progress + prefetch),
+                 SpotifyAdapter.ts, DirectAudioAdapter.ts (2nd <audio> for pre-buffer),
+                 types.ts (PlayerState carries queue/index/shuffle/buffered; the
+                 PlayerAdapter contract incl. getBufferedMs/getDurationMs/prepare)
+  views/         SearchView, PlaylistView (Play all + Shuffle), ConnectionsView,
+                 ProviderSetupForm
+  components/    PlayerBar (transport + ProgressBar + shuffle/queue toggles),
+                 ProgressBar (seekable, played+buffered layers, commit-on-release),
+                 QueuePanel (jump/reorder/remove drawer),
+                 CreatePlaylistDialog (modal; replaces the Electron-dead window.prompt),
+                 ServiceBadge
+  util/          time.ts (formatDuration, shared by ProgressBar + PlaylistView)
   App.tsx, main.tsx (bootstrap; reads backend info from the Electron bridge)
 
 Desktop (packages/desktop/src/):

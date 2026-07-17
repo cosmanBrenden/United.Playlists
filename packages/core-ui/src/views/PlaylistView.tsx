@@ -4,6 +4,7 @@ import { ApiError } from "../api/client";
 import type { Playlist, Track } from "../api/types";
 import { PROVIDER_LABELS } from "../api/types";
 import { ServiceBadge } from "../components/ServiceBadge";
+import { formatDuration } from "../util/time";
 
 export interface PlaylistViewProps {
   readonly client: ApiClient;
@@ -11,17 +12,8 @@ export interface PlaylistViewProps {
   readonly onChanged: (playlist: Playlist) => void;
   readonly onDeleted: (id: string) => void;
   readonly onPlay: (track: Track, queue: readonly Track[]) => void;
+  readonly onShufflePlay: (tracks: readonly Track[]) => void;
 }
-
-const formatDuration = (ms: number | null): string => {
-  if (ms === null) {
-    return "--:--";
-  }
-  const totalSeconds = Math.round(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-};
 
 export function PlaylistView({
   client,
@@ -29,6 +21,7 @@ export function PlaylistView({
   onChanged,
   onDeleted,
   onPlay,
+  onShufflePlay,
 }: PlaylistViewProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -93,6 +86,14 @@ export function PlaylistView({
             disabled={tracks.length === 0}
           >
             Play all
+          </button>
+          <button
+            type="button"
+            onClick={() => onShufflePlay(tracks)}
+            disabled={tracks.length === 0}
+            title="Play in a random order"
+          >
+            🔀 Shuffle
           </button>
           <button type="button" className="danger" onClick={() => void deletePlaylist()} disabled={busy}>
             Delete

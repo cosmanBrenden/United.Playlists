@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ApiClient } from "./api/client";
 import { ApiError } from "./api/client";
 import type { Playlist, ProviderId, ProviderInfo, Track } from "./api/types";
+import { CreatePlaylistDialog } from "./components/CreatePlaylistDialog";
 import { PlayerBar } from "./components/PlayerBar";
+import { QueuePanel } from "./components/QueuePanel";
 import { Player } from "./player/Player";
 import type { PlayerState } from "./player/types";
 import { ConnectionsView } from "./views/ConnectionsView";
@@ -30,6 +32,8 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
   const [selected, setSelected] = useState<Playlist | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>(player.getState());
   const [error, setError] = useState<string | null>(null);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const refreshPlaylists = useCallback(async (): Promise<void> => {
     try {
@@ -82,7 +86,7 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
     if (playerState.status !== "playing") {
       return;
     }
-    const timer = setInterval(() => void player.refreshPosition(), POSITION_POLL_MS);
+    const timer = setInterval(() => void player.refreshProgress(), POSITION_POLL_MS);
     return () => clearInterval(timer);
   }, [player, playerState.status]);
 
@@ -95,19 +99,25 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
     [player],
   );
 
-  const createPlaylist = async (): Promise<void> => {
-    const name = window.prompt("Name your playlist");
-    if (!name?.trim()) {
-      return;
-    }
-    try {
-      const created = await client.createPlaylist(name.trim(), null);
+  const shufflePlay = useCallback(
+    (tracks: readonly Track[]) => {
+      void player.playShuffled(tracks);
+    },
+    [player],
+  );
+
+  // The dialog owns the create call so it can surface a failure inline and keep what
+  // the user typed; App only refreshes and selects the result on success.
+  const createPlaylist = useCallback(
+    async (name: string, description: string | null): Promise<void> => {
+      const created = await client.createPlaylist(name, description);
+      setCreating(false);
       await refreshPlaylists();
+      setTab("playlists");
       setSelectedId(created.id);
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Could not create the playlist");
-    }
-  };
+    },
+    [client, refreshPlaylists],
+  );
 
   const anyConnected = useMemo(() => providers.some((p) => p.connected), [providers]);
 
@@ -130,7 +140,7 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
 
         {tab === "playlists" && (
           <>
-            <button type="button" className="new-playlist" onClick={() => void createPlaylist()}>
+            <button type="button" className="new-playlist" onClick={() => setCreating(true)}>
               + New playlist
             </button>
             <ul className="playlist-list">
@@ -181,6 +191,7 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
                 void refreshPlaylists();
               }}
               onPlay={playTrack}
+              onShufflePlay={shufflePlay}
             />
           ) : (
             <p className="status">Pick a playlist, or create one.</p>
@@ -209,13 +220,32 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
         )}
       </main>
 
+      {queueOpen && (
+        <QueuePanel
+          queue={playerState.queue}
+          currentIndex={playerState.queueIndex}
+          onClose={() => setQueueOpen(false)}
+          onJump={(index) => void player.playQueueItem(index)}
+          onRemove={(index) => player.removeFromQueue(index)}
+          onMove={(from, to) => player.moveInQueue(from, to)}
+        />
+      )}
+
       <PlayerBar
         state={playerState}
         onToggle={() => void player.toggle()}
         onNext={() => void player.next()}
         onPrevious={() => void player.previous()}
         onVolume={(volume) => void player.setVolume(volume)}
+        onSeek={(positionMs) => void player.seek(positionMs)}
+        onToggleShuffle={() => player.setShuffle(!playerState.shuffle)}
+        onToggleQueue={() => setQueueOpen((open) => !open)}
+        queueOpen={queueOpen}
       />
+
+      {creating && (
+        <CreatePlaylistDialog onCancel={() => setCreating(false)} onCreate={createPlaylist} />
+      )}
     </div>
   );
 }
