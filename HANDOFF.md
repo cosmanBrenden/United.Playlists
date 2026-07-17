@@ -247,12 +247,17 @@ Not done / next:
      a PAID Apple Developer membership for a MusicKit key, an ES256 developer token
      (JWT signed server-side), and a Music User Token via MusicKit JS on the client.
      The stub documents the shape; it's a real chunk of work gated behind $99/yr.
-  2. PACKAGING / DISTRIBUTION — electron-builder is a dependency but there's NO config
-     yet. `npm run build` only builds the renderer. Real installers need: electron-
-     builder config, a bundled trimmed JRE (main.js already looks for
-     resourcesPath/jre/bin/java), the backend jar copied to resources, and — for
-     Spotify playback — production Widevine VMP signing via castLabs EVS. Also note
-     this build scrapes YT/SC, which blocks app-store distribution regardless.
+  2. PACKAGING / DISTRIBUTION — DONE for Linux, configured for all three desktop OSes.
+     See PACKAGING.md. `npm run dist` builds an installer for the host OS (Linux
+     AppImage + deb verified; win NSIS and mac dmg build on their own OS / CI). The
+     electron-builder config lives in the root package.json "build" field; the backend
+     jar ships as resources/backend.jar; the renderer is bundled into the asar. The app
+     requires Java 21 on PATH (checked at startup, friendly dialog if missing/old) —
+     no JRE is bundled, though main.js still prefers resources/jre/bin/java if one is
+     added later. STILL OPEN: production Widevine VMP signing (packaging/afterPack.cjs
+     runs it best-effort — needs a castLabs EVS account for Spotify playback in
+     distributed builds), app icons, and OS code-signing/notarization. Note this build
+     scrapes YT/SC, which blocks app-store distribution regardless.
   3. MOBILE — core-ui is deliberately shell-agnostic; Capacitor could wrap it. But
      mobile playback needs native Spotify/MusicKit SDK plugins, and a hosted backend
      becomes a real conversation (tokens can't just live on-device the same way).
@@ -316,4 +321,5 @@ Desktop (packages/desktop/src/):
 - When adding an authenticated provider: implement MusicProvider + OAuthClient, add a
   ProviderId, add a PlaybackMethod + a PlayerAdapter, and add a Flyway migration only
   if you need new columns. The registry + search + playback pick it up automatically.
-- Reference docs live in README.md (user-facing) and this file (dev-facing).
+- Reference docs live in README.md (user-facing), this file (dev-facing), and
+  PACKAGING.md (how to build installers, Java 21 requirement, per-OS notes, VMP signing).
