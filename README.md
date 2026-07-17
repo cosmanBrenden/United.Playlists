@@ -6,26 +6,26 @@ Songs from an artist you like are often on one service but not another, and a pl
 
 ## Status
 
-Desktop (Windows, macOS, Linux). Spotify and YouTube work; Apple Music is stubbed. See [Roadmap](#roadmap).
+Desktop (Windows, macOS, Linux). Spotify, YouTube, and SoundCloud work; Apple Music is stubbed. Packaged installers build for all three platforms (see [Installing](#installing)); Linux AppImage and `.deb` are verified. See [Roadmap](#roadmap).
 
 ## How it works
 
 ```
-┌─────────────────────── Electron ───────────────────────┐
-│  Renderer (React)                                      │
-│    Player facade ──┬── SpotifyAdapter → Web Playback   │
-│                    └── YouTubeAdapter  → IFrame player │
-│                            ▲                           │
-│  Main process              │ audio, direct from service│
-│    spawns backend, OAuth loopback listener             │
-└────────────────────────────┼───────────────────────────┘
+┌─────────────────────── Electron ────────────────────────┐
+│  Renderer (React)                                        │
+│    Player facade ──┬── SpotifyAdapter     → Web Playback │
+│                    └── DirectAudioAdapter → <audio>      │
+│                            ▲                             │
+│  Main process              │ audio, direct from service │
+│    spawns backend, OAuth loopback, Java 21 check         │
+└────────────────────────────┼────────────────────────────┘
                              │ HTTP (loopback + secret)
                     ┌────────┴─────────┐
                     │  Java backend    │  metadata, playlists,
                     │  (Spring Boot)   │  OAuth tokens, search
                     └────────┬─────────┘
                              │
-              Spotify Web API, YouTube Data API
+        Spotify Web API  ·  YouTube + SoundCloud (NewPipe, scraped)
 ```
 
 Two things are worth understanding before reading the code.
@@ -36,12 +36,19 @@ Two things are worth understanding before reading the code.
 
 ## Requirements
 
-- **Java 21+** and **Maven 3.9+**
-- **Node 20+**
-- A **Spotify client ID** — free, from the [Spotify developer dashboard](https://developer.spotify.com/dashboard). The account that owns the app must have **Spotify Premium**: since March 2026 a Development Mode app on a free account gets 403 on every request.
-- A **Google OAuth client ID** (desktop app type) — free, from the [Google Cloud console](https://console.cloud.google.com/), with the YouTube Data API v3 enabled
+**To run an installed build**, you need only:
 
-Register `http://127.0.0.1:8420/callback` as a redirect URI in both.
+- **Java 21+** on your PATH. The app checks for it at startup and shows a plain "install Java 21" dialog if it is missing or too old — nothing else has to be installed.
+
+**To build or run from source**, you additionally need:
+
+- **Maven 3.9+** and **Node 20+**
+
+Spotify is the only service that needs credentials, and only if you want to use it:
+
+- A **Spotify client ID** — free, from the [Spotify developer dashboard](https://developer.spotify.com/dashboard). The account that owns the app must have **Spotify Premium**: since March 2026 a Development Mode app on a free account gets 403 on every request. Register `http://127.0.0.1:8420/callback` as its redirect URI.
+
+**YouTube and SoundCloud need no setup at all** — no API key, OAuth, or account. They are reached anonymously through NewPipe (see [How YouTube and SoundCloud work](#how-youtube-and-soundcloud-work)) and are usable the moment the app starts.
 
 **Spotify playback needs Spotify Premium.** Free accounts can browse, import and search, but the Web Playback SDK will not play for them.
 
@@ -73,8 +80,7 @@ Chromium only auto-detects a keychain on GNOME and KDE; on anything else (LXQt, 
 npm install
 npm run backend:build
 
-export UP_SPOTIFY_CLIENT_ID=your-spotify-client-id
-export UP_YOUTUBE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+export UP_SPOTIFY_CLIENT_ID=your-spotify-client-id   # optional; Spotify only
 
 # Terminal 1: the UI dev server
 npm run dev --workspace @unitedplaylists/core-ui
@@ -83,28 +89,51 @@ npm run dev --workspace @unitedplaylists/core-ui
 npm run dev --workspace @unitedplaylists/desktop
 ```
 
-A service with no client ID configured reports itself unavailable rather than failing when you try to connect it.
+Spotify with no client ID configured reports itself unavailable rather than failing when you try to connect it. YouTube and SoundCloud always work.
+
+## Installing
+
+Build a double-click installer for the current OS:
+
+```bash
+npm run dist          # installer for the host OS, in release/
+npm run dist:linux    # AppImage + .deb
+npm run dist:win      # NSIS .exe installer
+npm run dist:mac      # dmg + zip
+```
+
+Each command builds the renderer and the backend jar first, then packages them with the Electron shell. The installed app bundles everything except Java: it expects **Java 21+** on the user's PATH (see [Requirements](#requirements)). Build each platform's installer on that platform (or in CI) — a macOS `.dmg` in particular cannot be produced on Linux or Windows.
+
+Full details, including the Widevine VMP signing needed for Spotify playback in a distributed build, are in [PACKAGING.md](PACKAGING.md).
 
 ## Tests
 
 ```bash
-npm run backend:test   # 188 tests, JaCoCo report at backend/target/site/jacoco/
-npm test               # 53 core-ui tests
+npm run backend:test   # ~240 backend tests, JaCoCo report at backend/target/site/jacoco/
+npm test               # 92 core-ui tests
 npm run typecheck
+node --test packages/desktop/src/*.test.js   # 16 Electron-shell tests
 ```
+
+Live network probes (NewPipe against real YouTube/SoundCloud) are disabled in the suite and run by hand — see `NewPipeLiveProbeTest` and HANDOFF.md.
 
 ## Layout
 
 ```
 backend/                     Spring Boot: metadata, playlists, tokens, search
   domain/                    Playlist, Track, TrackRef — local-only by construction
-  provider/                  MusicProvider SPI + Spotify/YouTube/Apple implementations
+  provider/                  MusicProvider SPI: Spotify (OAuth) + YouTube/SoundCloud
+                             (NewPipe, anonymous) + Apple Music (stub)
   service/                   Aggregated search, import, playback tickets, connections
 packages/core-ui/            React app — wrapped by Electron now, Capacitor later
   api/                       Typed backend client
-  player/                    Player facade + one adapter per service SDK
-packages/desktop/            Electron shell: backend supervisor, OAuth loopback
+  player/                    Player facade + SpotifyAdapter / DirectAudioAdapter
+packages/desktop/            Electron shell: backend supervisor, OAuth loopback,
+                             Java 21 check
+packaging/                   electron-builder afterPack hook (Widevine VMP signing)
 ```
+
+Packaging is configured in the root `package.json` `build` field; see [PACKAGING.md](PACKAGING.md).
 
 ## Adding a streaming service
 
@@ -139,9 +168,9 @@ These are reached through [NewPipeExtractor](https://github.com/TeamNewPipeExtra
 
 - **Spotify requires Premium, for everything.** Since 9 March 2026, apps in Development Mode only work if the account that owns the app has an active Premium subscription — this is not just about playback. On a free account every Web API call returns 403 with no explanation. See the [February 2026 migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
 - **Spotify returns at most 10 search results.** That migration cut the search `limit` ceiling from 50 to 10 and the default from 20 to 5. More than 10 now means paginating with `offset`, at one request per 10 results.
-- **YouTube, not YouTube Music.** YouTube Music has no public API; the libraries that appear to offer one impersonate its web client and break YouTube's terms of service. Searching reaches YouTube's catalogue, not the YouTube Music premium catalogue.
-- **YouTube quota.** Search costs 100 units against a 10,000/day default — roughly 100 searches per day. Typing is debounced accordingly.
-- **YouTube has no artist field.** The channel is used as the artist, which is right for official artist channels and imprecise for compilation uploads.
+- **YouTube, not YouTube Music.** NewPipe reaches YouTube proper, not the YouTube Music premium catalogue, which has no public API.
+- **YouTube has no artist field.** The uploading channel is used as the artist, which is right for official artist channels and imprecise for compilation uploads.
+- **Scraping is brittle.** YouTube and SoundCloud can break without warning when the sites change; the NewPipe auto-updater is the mitigation (see below), with a manual `newpipe.version` bump as the fallback.
 - **Spotify playback needs Premium**, and free accounts get browsing and import only.
 - **Re-importing creates a second copy** rather than overwriting, because your copy may hold edits worth more than an upstream rename.
 
@@ -150,6 +179,7 @@ These are reached through [NewPipeExtractor](https://github.com/TeamNewPipeExtra
 - **Apple Music.** Needs a paid Apple Developer membership for a MusicKit key, an ES256 developer token, and a Music User Token. The stub documents the shape.
 - **Mobile.** `core-ui` is deliberately shell-agnostic so Capacitor can wrap it. The hard part is not the UI: mobile playback needs native Spotify and MusicKit SDK plugins, and a hosted backend becomes a real conversation at that point.
 - **Gapless playback across services** — currently a swap between SDKs has an audible gap.
+- **Distribution polish.** Installers build today, but for friction-free distribution they still need app icons, OS code-signing/notarization (unsigned builds trip SmartScreen/Gatekeeper), and Castlabs EVS production signing for Spotify playback. Tracked in [PACKAGING.md](PACKAGING.md).
 
 ## Licence
 
