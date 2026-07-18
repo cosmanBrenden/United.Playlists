@@ -106,6 +106,27 @@ public class PlaylistEntry {
         return new TrackRef(provider, providerTrackId);
     }
 
+    /**
+     * Overwrites this slot's track with another, keeping its position in the
+     * playlist and its {@code addedAt}.
+     *
+     * <p>This is how cross-service migration swaps "the Spotify copy" for "the
+     * YouTube copy" without disturbing the surrounding order: the slot is the same,
+     * only what fills it changes. Replacing in place rather than remove-then-insert
+     * is deliberate — it cannot renumber the rest of the playlist, so a batch
+     * migration of several tracks never has to worry about positions shifting under
+     * it.
+     */
+    void replaceTrack(Track track) {
+        this.provider = track.ref().provider();
+        this.providerTrackId = track.ref().providerTrackId();
+        this.title = track.title();
+        this.artists = String.join(ARTIST_SEP, track.artists());
+        this.album = track.album();
+        this.durationMs = track.duration() == null ? null : track.duration().toMillis();
+        this.artworkUrl = track.artworkUrl();
+    }
+
     public Instant getAddedAt() {
         return addedAt;
     }

@@ -177,6 +177,27 @@ class PlaylistTest {
             assertThatThrownBy(() -> playlist.getEntries().clear())
                     .isInstanceOf(UnsupportedOperationException.class);
         }
+
+        @Test
+        void replaceSwapsTheTrackKeepingItsPosition() {
+            Playlist playlist = threeTracks();
+            playlist.replaceAt(1, Fixtures.youtubeTrack("yt2", "Two on YouTube"), T1);
+
+            assertThat(playlist.getEntries()).extracting(e -> e.toTrack().title())
+                    .containsExactly("One", "Two on YouTube", "Three");
+            assertThat(playlist.getEntries()).extracting(PlaylistEntry::getPosition)
+                    .containsExactly(0, 1, 2);
+            assertThat(playlist.getEntries().get(1).getRef().provider())
+                    .isEqualTo(ProviderId.YOUTUBE);
+        }
+
+        @Test
+        void replaceOutOfRangeIsRejected() {
+            Playlist playlist = threeTracks();
+
+            assertThatThrownBy(() -> playlist.replaceAt(3, Fixtures.spotifyTrack("x", "X"), T1))
+                    .isInstanceOf(IndexOutOfBoundsException.class);
+        }
     }
 
     @Nested

@@ -167,6 +167,22 @@ public class Playlist {
         return removed;
     }
 
+    /**
+     * Swaps the track at {@code position} for {@code track}, keeping the slot's
+     * place in the order. Used by cross-service migration to replace a track with
+     * the same song on another service.
+     *
+     * @return the entry, now carrying the new track
+     */
+    public PlaylistEntry replaceAt(int position, Track track, Instant now) {
+        Objects.requireNonNull(track, "track");
+        checkPosition(position, entries.size() - 1);
+        PlaylistEntry entry = entries.get(position);
+        entry.replaceTrack(track);
+        touch(now);
+        return entry;
+    }
+
     /** Moves one entry, shifting the rest. Used by drag-to-reorder in the UI. */
     public void move(int from, int to, Instant now) {
         checkPosition(from, entries.size() - 1);

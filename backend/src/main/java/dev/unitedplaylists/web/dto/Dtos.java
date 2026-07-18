@@ -133,6 +133,86 @@ public final class Dtos {
     public record MoveTrackRequest(@PositiveOrZero int from, @PositiveOrZero int to) {
     }
 
+    @Schema(description = "Ask to move some or all of a playlist's tracks onto one service")
+    public record MigrateRequest(
+            @Schema(description = "The service to move the tracks onto")
+            @jakarta.validation.constraints.NotNull ProviderId targetProvider,
+            @Schema(description = "0-based positions to migrate. Empty or omitted means the "
+                    + "whole playlist. Positions already on the target service are skipped.")
+            List<@PositiveOrZero Integer> positions) {
+
+        public MigrateRequest {
+            positions = positions == null ? List.of() : List.copyOf(positions);
+        }
+    }
+
+    @Schema(description = "Replace one track in place with the same song on another service")
+    public record ReplaceTrackRequest(
+            @Schema(description = "Track key to put in the slot, e.g. YOUTUBE:dQw4w9WgXcQ")
+            @NotBlank String trackKey,
+            @NotBlank @Size(max = 512) String title,
+            List<String> artists,
+            @Size(max = 512) String album,
+            Long durationMs,
+            @Size(max = 1024) String artworkUrl,
+            @Schema(description = "The key the caller believes is currently at that position. "
+                    + "When given, the replace is rejected if the slot no longer holds it — "
+                    + "a guard against replacing the wrong track after the playlist changed.")
+            String expectedKey) {
+    }
+
+    @Schema(description = "A track swapped automatically during migration")
+    public record ReplacementDto(int position, TrackDto from, TrackDto to) {
+
+        public static ReplacementDto from(dev.unitedplaylists.service.MigrationService.Replacement r) {
+            return new ReplacementDto(r.position(), TrackDto.from(r.from()), TrackDto.from(r.to()));
+        }
+    }
+
+    @Schema(description = "A track migration could not confidently match, with candidates to pick from")
+    public record UnresolvedMatchDto(
+            int position,
+            TrackDto source,
+            @Schema(description = "Candidate matches from every service, best first")
+            List<TrackDto> candidates) {
+
+        public static UnresolvedMatchDto from(dev.unitedplaylists.service.MigrationService.Unresolved u) {
+            return new UnresolvedMatchDto(
+                    u.position(),
+                    TrackDto.from(u.source()),
+                    u.candidates().stream().map(TrackDto::from).toList());
+        }
+    }
+
+    @Schema(description = "The outcome of a migration job")
+    public record MigrationResultDto(
+            ProviderId target,
+            @Schema(description = "The playlist after the automatic replacements")
+            PlaylistDto playlist,
+            @Schema(description = "Tracks replaced automatically")
+            List<ReplacementDto> replaced,
+            @Schema(description = "Tracks that need a manual choice")
+            List<UnresolvedMatchDto> unresolved,
+            @Schema(description = "Selected tracks already on the target service, left untouched")
+            int alreadyOnTarget,
+            @Schema(description = "Services that failed to answer; results may be incomplete")
+            List<ProviderFailureDto> failures) {
+
+        public static MigrationResultDto from(
+                dev.unitedplaylists.service.MigrationService.MigrationResult result) {
+            return new MigrationResultDto(
+                    result.target(),
+                    PlaylistDto.from(result.playlist()),
+                    result.replaced().stream().map(ReplacementDto::from).toList(),
+                    result.unresolved().stream().map(UnresolvedMatchDto::from).toList(),
+                    result.alreadyOnTarget(),
+                    result.failures().stream()
+                            .map(f -> new ProviderFailureDto(
+                                    f.provider(), f.kind().name(), f.message(), f.requiresReconnect()))
+                            .toList());
+        }
+    }
+
     @Schema(description = "Merged results from every connected service")
     public record SearchResponse(
             String query,

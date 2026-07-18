@@ -122,6 +122,17 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
 
   const anyConnected = useMemo(() => providers.some((p) => p.connected), [providers]);
 
+  // Services a track can actually be migrated onto: available, and searchable right
+  // now — a connected authenticated service, or a scraper that needs no sign-in.
+  // Anything else has nowhere to search, so offering it as a target would only fail.
+  const migrationTargets = useMemo<readonly ProviderId[]>(
+    () =>
+      providers
+        .filter((p) => p.available && (p.connected || !p.requiresAuthentication))
+        .map((p) => p.id),
+    [providers],
+  );
+
   return (
     <div className="app">
       <nav className="sidebar">
@@ -193,6 +204,7 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
               }}
               onPlay={playTrack}
               onShufflePlay={shufflePlay}
+              migrationTargets={migrationTargets}
             />
           ) : (
             <p className="status">Pick a playlist, or create one.</p>

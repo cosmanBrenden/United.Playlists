@@ -1,11 +1,13 @@
 package dev.unitedplaylists.service;
 
 import dev.unitedplaylists.domain.Playlist;
+import dev.unitedplaylists.domain.PlaylistEntry;
 import dev.unitedplaylists.domain.Track;
 import dev.unitedplaylists.repository.PlaylistRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -74,6 +76,57 @@ public class PlaylistService {
         return repository.save(playlist);
     }
 
+    /**
+     * Replaces the track at {@code position} with {@code track}, keeping its place
+     * in the order. This is how cross-service migration swaps a song for its copy on
+     * another service.
+     *
+     * @param expectedKey the key the caller believes is currently at that position,
+     *     or null to skip the check. When given and it does not match, the call is
+     *     rejected rather than replacing the wrong track — a guard against a playlist
+     *     that changed under a stale view (a reorder while a migration dialog was
+     *     open).
+     * @throws StaleReplacementException if {@code expectedKey} no longer sits there
+     */
+    @Transactional
+    public Playlist replaceTrack(UUID id, int position, Track track, String expectedKey) {
+        Playlist playlist = findById(id);
+        guardExpected(playlist, position, expectedKey);
+        playlist.replaceAt(position, track, now());
+        return repository.save(playlist);
+    }
+
+    /**
+     * Applies several in-place replacements at once, in one transaction.
+     *
+     * <p>Used by a migration job so replacing ten tracks is one save and one
+     * version bump, not ten. In-place replacement means the positions in the map
+     * stay valid as the batch is applied — nothing shifts.
+     *
+     * @param replacements position → replacement track
+     */
+    @Transactional
+    public Playlist replaceTracks(UUID id, Map<Integer, Track> replacements) {
+        Playlist playlist = findById(id);
+        Instant now = now();
+        replacements.forEach((position, track) -> playlist.replaceAt(position, track, now));
+        return repository.save(playlist);
+    }
+
+    private void guardExpected(Playlist playlist, int position, String expectedKey) {
+        if (expectedKey == null) {
+            return;
+        }
+        List<PlaylistEntry> entries = playlist.getEntries();
+        if (position < 0 || position >= entries.size()) {
+            throw new StaleReplacementException(position, expectedKey, null);
+        }
+        String actual = entries.get(position).getRef().toKey();
+        if (!actual.equals(expectedKey)) {
+            throw new StaleReplacementException(position, expectedKey, actual);
+        }
+    }
+
     @Transactional
     public Playlist moveTrack(UUID id, int from, int to) {
         Playlist playlist = findById(id);
@@ -97,6 +150,20 @@ public class PlaylistService {
     public static class PlaylistNotFoundException extends RuntimeException {
         public PlaylistNotFoundException(UUID id) {
             super("No playlist with id " + id);
+        }
+    }
+
+    /**
+     * The track a replace was meant to overwrite is no longer at that position.
+     *
+     * <p>Signals a lost race — the playlist changed between the caller reading it and
+     * asking to replace — so the caller should reload rather than clobber whatever is
+     * now there.
+     */
+    public static class StaleReplacementException extends RuntimeException {
+        public StaleReplacementException(int position, String expectedKey, String actualKey) {
+            super("Position " + position + " no longer holds " + expectedKey
+                    + (actualKey == null ? " (out of range)" : " (now " + actualKey + ")"));
         }
     }
 }

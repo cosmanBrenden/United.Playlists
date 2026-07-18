@@ -2,6 +2,7 @@ import type {
   ApiErrorBody,
   ExtractorStatus,
   ImportSummary,
+  MigrationResult,
   PlaybackTicket,
   Playlist,
   ProviderId,
@@ -134,6 +135,55 @@ export class ApiClient {
       "POST",
       `/api/v1/playlists/${encodeURIComponent(playlistId)}/tracks/move`,
       { from, to },
+    );
+  }
+
+  /**
+   * Migrates tracks to another service.
+   *
+   * Searches the target for each selected track (the whole playlist when
+   * `positions` is omitted or empty). Confident matches are replaced automatically;
+   * the rest come back in `unresolved` with candidates from every service to choose
+   * from.
+   */
+  async migratePlaylist(
+    playlistId: string,
+    targetProvider: ProviderId,
+    positions?: readonly number[],
+  ): Promise<MigrationResult> {
+    return this.#request<MigrationResult>(
+      "POST",
+      `/api/v1/playlists/${encodeURIComponent(playlistId)}/migrate`,
+      { targetProvider, positions: positions ?? [] },
+    );
+  }
+
+  /**
+   * Replaces the track at a position with the same song on another service,
+   * keeping its place in the order.
+   *
+   * @param expectedKey the key the caller believes is currently there; the backend
+   *   rejects the call with a 409 if the slot has since changed, guarding against a
+   *   stale view.
+   */
+  async replaceTrack(
+    playlistId: string,
+    position: number,
+    track: Track,
+    expectedKey: string,
+  ): Promise<Playlist> {
+    return this.#request<Playlist>(
+      "POST",
+      `/api/v1/playlists/${encodeURIComponent(playlistId)}/tracks/${position}/replace`,
+      {
+        trackKey: track.key,
+        title: track.title,
+        artists: track.artists,
+        album: track.album,
+        durationMs: track.durationMs,
+        artworkUrl: track.artworkUrl,
+        expectedKey,
+      },
     );
   }
 

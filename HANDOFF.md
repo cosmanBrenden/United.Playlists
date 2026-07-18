@@ -274,6 +274,44 @@ Handy env vars the backend reads (Electron sets most):
       can only play "now", not warm a specific next URI). On advance the facade reuses
       the cached ticket, skipping the network round-trip.
 
+- CROSS-SERVICE MIGRATION reuses the search fan-out rather than adding a parallel
+  path. MigrationService, per selected track, calls SearchService.searchAll ONCE:
+  the target's slice of those results feeds the auto-match decision, and the WHOLE
+  result set (every service) becomes the candidate pool for the manual picker. So
+  "search the target" and "offer alternatives from everywhere" cost one query, not
+  two.
+
+  TrackMatcher is the judgement, kept pure and heavily unit-tested because it is the
+  thing that can silently do the wrong thing. It normalises titles (lowercase, strip
+  accents, drop "(feat …)"/"- Remastered" qualifiers) and scores title + artist token
+  overlap. The bar for EXACT — the only quality that auto-replaces — is deliberately
+  high: identical cleaned title, artist overlap, AND durations within 4s when both are
+  known. That duration gate is what stops a studio cut being silently swapped for a
+  live/extended take that shares a title and artist. bestExact also DECLINES when two
+  different candidates are both EXACT (an ambiguous query) rather than guessing.
+
+  Replacement is IN PLACE (Playlist.replaceAt / PlaylistEntry.replaceTrack), never
+  remove-then-add, so positions never shift — a batch of ten replacements can't
+  renumber the rows under itself, and the manual picker's positions stay valid after
+  the automatic ones are applied. The replace endpoint takes an expectedKey guard and
+  409s if the slot changed under a stale view (StaleReplacementException).
+
+  Why the search is NOT inside a DB transaction, and why tracks are processed
+  serially rather than in parallel: same reasons as search generally — don't hold a
+  connection across seconds of HTTP, and don't fire N provider searches at once and
+  get rate-limited (YouTube bills 100 units each). MigrationService reads the
+  playlist, does all its searching with no txn held, and applies the confident
+  replacements in one short write at the end.
+
+  Endpoints: POST /playlists/{id}/migrate (returns replaced + unresolved-with-
+  candidates + failures) and POST /playlists/{id}/tracks/{position}/replace (applies
+  one manual choice). Frontend: PlaylistView owns selection + the migrate bar, both
+  behind an opt-in "⇄ Migrate" header toggle (migrateMode) so the row checkboxes stay
+  out of the way during normal listening;
+  MigrationDialog is the resolve modal (candidates from all services, target's own
+  results flagged with an accent rail). App computes migrationTargets = services that
+  are available AND searchable now (connected authenticated, or anonymous scraper).
+
 
 4. ROADMAP / WHAT'S LEFT
 ------------------------
@@ -285,6 +323,12 @@ Done: playlists (create via in-app modal / edit / reorder / delete, mixed-servic
   + a transport toggle), an editable queue panel (jump / reorder / remove), and
   next-track pre-buffering for smoother same-service transitions. See the PLAYER
   FACADE design note above for how these hang together.
+  CROSS-SERVICE MIGRATION: select tracks (or the whole playlist), pick a target
+  service, and Migrate. The backend searches the target per track; a confident,
+  unambiguous match (same cleaned title + overlapping artist + duration within 4s)
+  is swapped in place automatically, and anything else comes back in a resolve modal
+  listing candidates from EVERY service to choose from (or keep the original). See
+  the CROSS-SERVICE MIGRATION design note below.
 
 Not done / next:
   1. APPLE MUSIC — stubbed (AppleMusicProvider throws, isSetupSupported=false). Needs
@@ -318,9 +362,10 @@ Not done / next:
      MediaSource, a bigger job).
   5. YOUTUBE MUSIC (not just YouTube) — no public API; NewPipe reaches YouTube proper,
      not the YT Music premium catalog.
-  6. Nice-to-haves: playlist reordering across services already works; could add
-     cross-service "find this track on another service", dedup, offline metadata
-     refresh, drag-and-drop, keyboard shortcuts.
+  6. Nice-to-haves: playlist reordering across services already works; cross-service
+     "find this track on another service" is now DONE (see CROSS-SERVICE MIGRATION);
+     could still add dedup, offline metadata refresh, drag-and-drop, keyboard
+     shortcuts.
 
 
 5. FILE MAP (backend/src/main/java/dev/unitedplaylists/)
@@ -339,7 +384,9 @@ Not done / next:
     oauth/       OAuthClient, OAuthProperties, Pkce, TokenSet, AuthorizationRequest
   service/       SearchService (parallel fan-out on virtual threads), PlaylistService,
                  ImportService, PlaybackService, ConnectionService,
-                 ProviderSettingsService, EnvironmentCredentials, OAuthFlowService
+                 ProviderSettingsService, EnvironmentCredentials, OAuthFlowService,
+                 MigrationService (cross-service migrate job), TrackMatcher (pure
+                 same-song judgement; heavily unit-tested)
   web/           PlaylistController, SearchController, PlaybackController,
                  ConnectionController, ExtractorController, GlobalExceptionHandler,
                  dto/Dtos
@@ -354,12 +401,13 @@ Frontend (packages/core-ui/src/):
                  SpotifyAdapter.ts, DirectAudioAdapter.ts (2nd <audio> for pre-buffer),
                  types.ts (PlayerState carries queue/index/shuffle/buffered; the
                  PlayerAdapter contract incl. getBufferedMs/getDurationMs/prepare)
-  views/         SearchView, PlaylistView (Play all + Shuffle), ConnectionsView,
-                 ProviderSetupForm
+  views/         SearchView, PlaylistView (Play all + Shuffle + select/migrate),
+                 ConnectionsView, ProviderSetupForm
   components/    PlayerBar (transport + ProgressBar + shuffle/queue toggles),
                  ProgressBar (seekable, played+buffered layers, commit-on-release),
                  QueuePanel (jump/reorder/remove drawer),
                  CreatePlaylistDialog (modal; replaces the Electron-dead window.prompt),
+                 MigrationDialog (resolve modal: candidates from all services),
                  ServiceBadge
   util/          time.ts (formatDuration, shared by ProgressBar + PlaylistView)
   App.tsx, main.tsx (bootstrap; reads backend info from the Electron bridge)

@@ -152,6 +152,38 @@ export interface ImportSummary {
   readonly imported: readonly Playlist[];
 }
 
+/** A track swapped automatically during a migration. */
+export interface MigrationReplacement {
+  readonly position: number;
+  readonly from: Track;
+  readonly to: Track;
+}
+
+/**
+ * A track a migration could not confidently match on its own.
+ *
+ * The candidates are drawn from every service, best match first, so the user can
+ * resolve it — or pick a copy on a third service — from a single list.
+ */
+export interface UnresolvedMatch {
+  readonly position: number;
+  readonly source: Track;
+  readonly candidates: readonly Track[];
+}
+
+/** The outcome of a migration job. */
+export interface MigrationResult {
+  readonly target: ProviderId;
+  /** The playlist after the automatic replacements were applied. */
+  readonly playlist: Playlist;
+  readonly replaced: readonly MigrationReplacement[];
+  readonly unresolved: readonly UnresolvedMatch[];
+  /** How many selected tracks were already on the target service and left alone. */
+  readonly alreadyOnTarget: number;
+  /** Services that failed to answer; when non-empty, matches may be incomplete. */
+  readonly failures: readonly ProviderFailure[];
+}
+
 export interface ExtractorStatus {
   /** The NewPipe version in force (the newest downloaded, or the bundled one). */
   readonly runningVersion: string;
