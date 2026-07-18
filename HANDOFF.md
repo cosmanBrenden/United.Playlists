@@ -300,8 +300,12 @@ Not done / next:
      no JRE is bundled, though main.js still prefers resources/jre/bin/java if one is
      added later. STILL OPEN: production Widevine VMP signing (packaging/afterPack.cjs
      runs it best-effort — needs a castLabs EVS account for Spotify playback in
-     distributed builds), app icons, and OS code-signing/notarization. Note this build
+     distributed builds) and OS code-signing/notarization. Note this build
      scrapes YT/SC, which blocks app-store distribution regardless.
+     APP ICON: done — packaging/icon.png (1024², generated from packaging/icon.svg,
+     the vinyl-wreath emblem). electron-builder auto-derives .icns/.ico/Linux sizes
+     from it since buildResources=packaging; the running window icon is
+     packages/desktop/src/assets/icon.png (see createWindow in main.js).
   3. MOBILE — core-ui is deliberately shell-agnostic; Capacitor could wrap it. But
      mobile playback needs native Spotify/MusicKit SDK plugins, and a hosted backend
      becomes a real conversation (tokens can't just live on-device the same way).

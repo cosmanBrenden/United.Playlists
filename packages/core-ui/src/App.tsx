@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ApiClient } from "./api/client";
 import { ApiError } from "./api/client";
 import type { Playlist, ProviderId, ProviderInfo, Track } from "./api/types";
+import { BrandLogo } from "./components/BrandLogo";
 import { CreatePlaylistDialog } from "./components/CreatePlaylistDialog";
 import { PlayerBar } from "./components/PlayerBar";
 import { QueuePanel } from "./components/QueuePanel";
@@ -124,7 +125,7 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
   return (
     <div className="app">
       <nav className="sidebar">
-        <h1 className="brand">United.Playlists</h1>
+        <BrandLogo />
 
         <div className="tabs">
           <button type="button" onClick={() => setTab("playlists")} aria-pressed={tab === "playlists"}>

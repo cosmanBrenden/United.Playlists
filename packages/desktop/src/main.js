@@ -35,6 +35,8 @@ const isDev = !app.isPackaged;
 let backend = null;
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
+/** @type {BrowserWindow | null} */
+let splashWindow = null;
 
 /**
  * Tells Chromium which Linux keychain to use.
@@ -248,6 +250,45 @@ async function startBackend() {
   return backend.start();
 }
 
+/**
+ * A frameless, transparent splash shown the moment the app starts, so a user
+ * launching the packaged build sees the lockup (with its pulsing aura) instead
+ * of a blank screen while the Java backend spawns. Closed once the main window
+ * is ready to show. Best-effort: any failure here must never block startup.
+ */
+function createSplash() {
+  try {
+    splashWindow = new BrowserWindow({
+      width: 920,
+      height: 400,
+      frame: false,
+      transparent: true,
+      backgroundColor: "#00000000",
+      hasShadow: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      skipTaskbar: true,
+      focusable: false,
+      alwaysOnTop: true,
+      center: true,
+      show: false,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+    splashWindow.once("ready-to-show", () => splashWindow?.show());
+    void splashWindow.loadFile(join(__dirname, "assets", "splash.html"));
+  } catch (cause) {
+    console.warn("[splash] could not open splash window:", cause);
+    splashWindow = null;
+  }
+}
+
+function closeSplash() {
+  splashWindow?.destroy();
+  splashWindow = null;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -255,6 +296,9 @@ function createWindow() {
     minWidth: 900,
     minHeight: 560,
     backgroundColor: "#0f1115",
+    // Window/taskbar icon for the running app. macOS and Windows take their icon
+    // from the packaged bundle/exe instead, but this drives Linux and dev runs.
+    icon: join(__dirname, "assets", "icon.png"),
     show: false,
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
@@ -268,7 +312,10 @@ function createWindow() {
     },
   });
 
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
+  mainWindow.once("ready-to-show", () => {
+    closeSplash();
+    mainWindow?.show();
+  });
 
   // Renderer console goes to the terminal in dev. Without this, a failure in the
   // page is invisible unless DevTools happens to be open — which is how a broken
@@ -297,7 +344,11 @@ function createWindow() {
     void mainWindow.loadFile(join(__dirname, "..", "..", "core-ui", "dist", "index.html"));
   }
 
+  // Backstops so the splash can never outlive startup: a load that finishes
+  // without firing ready-to-show, or the window being closed outright.
+  mainWindow.webContents.once("did-finish-load", closeSplash);
   mainWindow.on("closed", () => {
+    closeSplash();
     mainWindow = null;
   });
 }
@@ -390,11 +441,16 @@ async function initialiseWidevine() {
 }
 
 app.whenReady().then(async () => {
+  // Up front, before the slow work (Widevine + spawning the backend), so there is
+  // immediate visual feedback that the app is launching.
+  createSplash();
+
   await initialiseWidevine();
 
   try {
     await startBackend();
   } catch (cause) {
+    closeSplash();
     const { dialog } = await import("electron");
     dialog.showErrorBox("UnitedPlaylists could not start", String(cause.message ?? cause));
     app.quit();

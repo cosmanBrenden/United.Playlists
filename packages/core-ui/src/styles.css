@@ -7,6 +7,8 @@
   --accent: #6c9fff;
   --danger: #ff6b6b;
   --warning: #ffcc66;
+  /* Gold of the logo's olive wreath. */
+  --logo-wreath: #cdb87e;
   color-scheme: dark;
 }
 
@@ -60,9 +62,71 @@ body {
   z-index: 30;
 }
 
+/* Wordmark: UNITED · emblem · PLAYLISTS in a stately serif. */
 .brand {
-  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0 0 1rem;
+  font-family: Georgia, "Times New Roman", Cambria, serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+/* Above the emblem in the stacking order, so the D of UNITED and the P of
+   PLAYLISTS overlay the outer leaves rather than being covered by them. A thin
+   black outline makes the letters pop where they cross the gold leaves. */
+.brand .word {
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.55),
+    1px -1px 0 rgba(0, 0, 0, 0.55),
+    -1px 1px 0 rgba(0, 0, 0, 0.55),
+    1px 1px 0 rgba(0, 0, 0, 0.55);
+}
+
+/* Wrapper for the emblem. Negative margin pulls it into the words so it tucks
+   behind the adjacent letters where they meet; the wrapper (not the SVG) hosts
+   the aura pseudo-element. */
+.logo-mark {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin: 0 -6px;
+  z-index: 0;
+}
+
+.brand .logo-icon {
+  display: block;
+  width: 54px;
+  height: 54px;
+}
+
+/* Soft aura centred on the emblem, sitting behind both the emblem and the
+   words (negative z-index) as a gentle halo on the dark sidebar. */
+.logo-mark::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 170%;
+  height: 170%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(108, 159, 255, 0.2) 0%,
+    rgba(108, 159, 255, 0.067) 45%,
+    transparent 70%
+  );
+  filter: blur(5px);
+  z-index: -1;
+  pointer-events: none;
 }
 
 .tabs {
