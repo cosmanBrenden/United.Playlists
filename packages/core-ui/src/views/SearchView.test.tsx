@@ -243,4 +243,109 @@ describe("SearchView", () => {
       expect(client.addTrack).toHaveBeenCalledWith("pl1", spotifySong);
     });
   });
+
+  it("confirms in the UI when a track is added, then clears the notice", async () => {
+    const spotifySong = track("SPOTIFY", "a", "Spotify Song");
+    client.search.mockResolvedValue({ ...emptyResponse("q"), results: [spotifySong] });
+    client.addTrack.mockResolvedValue({ id: "pl1", name: "Road Trip" });
+    const onTrackAdded = vi.fn();
+    render(
+      <SearchView
+        client={client as unknown as ApiClient}
+        playlists={[
+          {
+            id: "pl1",
+            name: "Road Trip",
+            description: null,
+            origin: null,
+            providersUsed: [],
+            trackCount: 0,
+            entries: [],
+            createdAt: "2026-06-01T12:00:00Z",
+            updatedAt: "2026-06-01T12:00:00Z",
+          },
+        ]}
+        onPlay={onPlay}
+        onTrackAdded={onTrackAdded}
+      />,
+    );
+
+    await type("q");
+    await advancePastDebounce();
+    await waitFor(() => expect(screen.getByText("Spotify Song")).toBeInTheDocument());
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.selectOptions(screen.getByLabelText(/Add Spotify Song to a playlist/), "pl1");
+
+    await waitFor(() => {
+      expect(screen.getByText(/Added .*Spotify Song.* to Road Trip/)).toBeInTheDocument();
+    });
+    expect(onTrackAdded).toHaveBeenCalledWith({ id: "pl1", name: "Road Trip" });
+
+    // The confirmation is transient — it clears itself after the timeout.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.queryByText(/Added .*Spotify Song/)).not.toBeInTheDocument();
+  });
+
+  it("re-orders results when a different sort is chosen", async () => {
+    client.search.mockResolvedValue({
+      ...emptyResponse("q"),
+      results: [
+        track("YOUTUBE", "a", "Zebra"),
+        track("SPOTIFY", "b", "Apple"),
+        track("YOUTUBE", "c", "Mango"),
+      ],
+    } satisfies SearchResponse);
+    renderView();
+
+    await type("q");
+    await advancePastDebounce();
+    await waitFor(() => expect(screen.getByText("Apple")).toBeInTheDocument());
+
+    // Backend order is preserved under the default "Relevance".
+    const titlesBefore = screen.getAllByText(/Zebra|Apple|Mango/).map((el) => el.textContent);
+    expect(titlesBefore).toEqual(["Zebra", "Apple", "Mango"]);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.selectOptions(screen.getByLabelText("Sort by"), "title");
+
+    await waitFor(() => {
+      const titles = screen.getAllByText(/Zebra|Apple|Mango/).map((el) => el.textContent);
+      expect(titles).toEqual(["Apple", "Mango", "Zebra"]);
+    });
+  });
+
+  it("flips between ascending and descending when the direction is toggled", async () => {
+    client.search.mockResolvedValue({
+      ...emptyResponse("q"),
+      results: [
+        track("YOUTUBE", "a", "Zebra"),
+        track("SPOTIFY", "b", "Apple"),
+        track("YOUTUBE", "c", "Mango"),
+      ],
+    } satisfies SearchResponse);
+    renderView();
+
+    await type("q");
+    await advancePastDebounce();
+    await waitFor(() => expect(screen.getByText("Apple")).toBeInTheDocument());
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.selectOptions(screen.getByLabelText("Sort by"), "title");
+
+    // Ascending by default.
+    await waitFor(() => {
+      const titles = screen.getAllByText(/Zebra|Apple|Mango/).map((el) => el.textContent);
+      expect(titles).toEqual(["Apple", "Mango", "Zebra"]);
+    });
+
+    // Toggling the direction reverses the order.
+    await user.click(screen.getByRole("button", { name: /Sort direction/ }));
+    await waitFor(() => {
+      const titles = screen.getAllByText(/Zebra|Apple|Mango/).map((el) => el.textContent);
+      expect(titles).toEqual(["Zebra", "Mango", "Apple"]);
+    });
+  });
 });

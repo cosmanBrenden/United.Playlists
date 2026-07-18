@@ -13,12 +13,19 @@ class FakeAdapter implements PlayerAdapter {
   resumeCalls = 0;
   seekCalls: number[] = [];
   volumeCalls: number[] = [];
+  prepareCalls: PlaybackTicket[] = [];
   positionMs: number | null = 0;
+  bufferedMs: number | null = 0;
+  durationMs: number | null = null;
   failInit?: Error;
   failPlay?: Error;
   #onEnded?: () => void;
 
   constructor(readonly method: PlaybackMethod) {}
+
+  async prepare(ticket: PlaybackTicket): Promise<void> {
+    this.prepareCalls.push(ticket);
+  }
 
   async init(): Promise<void> {
     this.initCalls++;
@@ -52,6 +59,14 @@ class FakeAdapter implements PlayerAdapter {
 
   async getPositionMs(): Promise<number | null> {
     return this.positionMs;
+  }
+
+  async getBufferedMs(): Promise<number | null> {
+    return this.bufferedMs;
+  }
+
+  async getDurationMs(): Promise<number | null> {
+    return this.durationMs;
   }
 
   onEnded(callback: () => void): void {
@@ -244,6 +259,150 @@ describe("Player", () => {
 
       expect(player.getState().status).toBe("idle");
       expect(spotify.playCalls).toHaveLength(0);
+    });
+  });
+
+  describe("shuffle", () => {
+    const a = track("YOUTUBE", "a", "A");
+    const b = track("YOUTUBE", "b", "B");
+    const c = track("YOUTUBE", "c", "C");
+    const d = track("YOUTUBE", "d", "D");
+
+    it("plays a shuffled queue containing every track", async () => {
+      await player.playShuffled([a, b, c, d]);
+
+      const queue = player.getState().queue;
+      expect(queue).toHaveLength(4);
+      expect(new Set(queue.map((t) => t.key))).toEqual(new Set([a, b, c, d].map((t) => t.key)));
+      expect(player.getState().shuffle).toBe(true);
+      expect(player.getState().status).toBe("playing");
+    });
+
+    it("keeps the current track when shuffle is toggled on mid-play", async () => {
+      player.setQueue([a, b, c, d], 1);
+      await player.playQueueItem(1);
+
+      player.setShuffle(true);
+
+      // B is playing; it must stay at index 1 and the played history is untouched.
+      expect(player.getState().shuffle).toBe(true);
+      expect(player.getState().queue[0]?.key).toBe(a.key);
+      expect(player.getState().queue[1]?.key).toBe(b.key);
+      expect(new Set(player.getState().queue.map((t) => t.key))).toEqual(
+        new Set([a, b, c, d].map((t) => t.key)),
+      );
+    });
+
+    it("exposes shuffle state and can be turned off", () => {
+      player.setShuffle(true);
+      expect(player.isShuffle()).toBe(true);
+      player.setShuffle(false);
+      expect(player.isShuffle()).toBe(false);
+    });
+  });
+
+  describe("queue editing", () => {
+    const a = track("YOUTUBE", "a", "A");
+    const b = track("YOUTUBE", "b", "B");
+    const c = track("YOUTUBE", "c", "C");
+
+    beforeEach(() => {
+      player.setQueue([a, b, c], 0);
+    });
+
+    it("puts the queue and index into state for the panel to render", () => {
+      expect(player.getState().queue.map((t) => t.key)).toEqual([a.key, b.key, c.key]);
+      expect(player.getState().queueIndex).toBe(0);
+    });
+
+    it("removes an upcoming track without disturbing the current index", async () => {
+      await player.playQueueItem(0);
+      player.removeFromQueue(2);
+
+      expect(player.getState().queue.map((t) => t.key)).toEqual([a.key, b.key]);
+      expect(player.getState().queueIndex).toBe(0);
+    });
+
+    it("keeps the next track next when the current one is removed", async () => {
+      await player.playQueueItem(1); // B playing
+      player.removeFromQueue(1); // drop B
+
+      // A stays played, C is now what plays next.
+      expect(player.getState().queue.map((t) => t.key)).toEqual([a.key, c.key]);
+      await player.next();
+      expect(player.getState().track?.key).toBe(c.key);
+    });
+
+    it("reorders while keeping the playing track pointed at correctly", async () => {
+      await player.playQueueItem(0); // A playing
+      player.moveInQueue(2, 0); // C to the front
+
+      expect(player.getState().queue.map((t) => t.key)).toEqual([c.key, a.key, b.key]);
+      // A is still playing, now at index 1, so next() should reach B.
+      expect(player.getState().queueIndex).toBe(1);
+      await player.next();
+      expect(player.getState().track?.key).toBe(b.key);
+    });
+
+    it("appends to the end of the queue", () => {
+      const d = track("YOUTUBE", "d", "D");
+      player.addToQueue(d);
+      expect(player.getState().queue.map((t) => t.key)).toEqual([a.key, b.key, c.key, d.key]);
+    });
+  });
+
+  describe("pre-buffering the next track", () => {
+    const a = track("YOUTUBE", "a", "A");
+    const b = track("YOUTUBE", "b", "B");
+
+    it("prefetches the next track's ticket and prepares its adapter on play", async () => {
+      player.setQueue([a, b], 0);
+      await player.playQueueItem(0);
+
+      // The next track's ticket was fetched ahead of time, and the adapter warmed up.
+      await vi.waitFor(() => {
+        expect(youtube.prepareCalls.length).toBeGreaterThan(0);
+      });
+      expect(fetchTicket).toHaveBeenCalledWith(b.key);
+    });
+
+    it("reuses the prefetched ticket instead of fetching again when advancing", async () => {
+      player.setQueue([a, b], 0);
+      await player.playQueueItem(0);
+      await vi.waitFor(() => expect(youtube.prepareCalls.length).toBeGreaterThan(0));
+
+      const callsBefore = fetchTicket.mock.calls.length;
+      await player.next();
+
+      // Advancing plays B from the cached ticket: no extra fetch for B itself,
+      // though it may prefetch beyond the end (which finds nothing).
+      const bFetchesAfter = fetchTicket.mock.calls.filter((c) => c[0] === b.key).length;
+      expect(bFetchesAfter).toBe(1);
+      expect(fetchTicket.mock.calls.length).toBeGreaterThanOrEqual(callsBefore);
+    });
+  });
+
+  describe("progress", () => {
+    it("reports buffered and true duration from the adapter", async () => {
+      await player.play(track("SPOTIFY", "abc", "A Spotify Song"));
+      spotify.bufferedMs = 30000;
+      spotify.durationMs = 210000;
+      spotify.positionMs = 5000;
+
+      await player.refreshProgress();
+
+      expect(player.getState().bufferedMs).toBe(30000);
+      expect(player.getState().durationMs).toBe(210000);
+      expect(player.getState().positionMs).toBe(5000);
+    });
+
+    it("keeps the metadata duration when the adapter cannot report one", async () => {
+      await player.play(spotifyTrack); // durationMs 200000 from metadata
+      spotify.durationMs = null;
+
+      await player.refreshProgress();
+
+      expect(player.getState().durationMs).toBe(200000);
     });
   });
 

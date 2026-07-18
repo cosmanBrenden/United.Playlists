@@ -179,6 +179,85 @@ class PlaylistApiIntegrationTest {
     }
 
     @Test
+    @DisplayName("a track can be replaced in place with the same song on another service")
+    void replacesATrackInPlace() {
+        String id = createPlaylist("Migrate Me").path("id").asText();
+        exchange(HttpMethod.POST, "/api/v1/playlists/" + id + "/tracks",
+                Map.of("trackKey", "SPOTIFY:sp1", "title", "Hello",
+                        "artists", java.util.List.of("Adele")),
+                JsonNode.class);
+
+        ResponseEntity<JsonNode> replaced = exchange(
+                HttpMethod.POST, "/api/v1/playlists/" + id + "/tracks/0/replace",
+                Map.of("trackKey", "YOUTUBE:yt1", "title", "Hello",
+                        "artists", java.util.List.of("Adele"),
+                        "expectedKey", "SPOTIFY:sp1"),
+                JsonNode.class);
+
+        assertThat(replaced.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode entry = replaced.getBody().path("entries").get(0);
+        assertThat(entry.path("position").asInt()).isEqualTo(0);
+        assertThat(entry.path("track").path("provider").asText()).isEqualTo("YOUTUBE");
+        assertThat(replaced.getBody().path("trackCount").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a replace is refused when the slot no longer holds the expected track")
+    void rejectsAStaleReplace() {
+        String id = createPlaylist("Raced").path("id").asText();
+        exchange(HttpMethod.POST, "/api/v1/playlists/" + id + "/tracks",
+                Map.of("trackKey", "SPOTIFY:sp1", "title", "Hello"), JsonNode.class);
+
+        ResponseEntity<JsonNode> response = exchange(
+                HttpMethod.POST, "/api/v1/playlists/" + id + "/tracks/0/replace",
+                Map.of("trackKey", "YOUTUBE:yt1", "title", "Hello",
+                        "expectedKey", "SPOTIFY:somethingElse"),
+                JsonNode.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody().path("error").asText()).isEqualTo("stale_replacement");
+    }
+
+    @Test
+    @DisplayName("migrating with no service able to match surfaces the track for manual choice")
+    void migrateSurfacesUnmatchedTracks() {
+        // In the test profile the scrapers are off and nothing is connected, so the
+        // target search finds nothing — every track lands in `unresolved` and the
+        // playlist is left untouched. That is exactly the "no exact match" path.
+        String id = createPlaylist("To Migrate").path("id").asText();
+        exchange(HttpMethod.POST, "/api/v1/playlists/" + id + "/tracks",
+                Map.of("trackKey", "SPOTIFY:sp1", "title", "Hello",
+                        "artists", java.util.List.of("Adele")),
+                JsonNode.class);
+
+        ResponseEntity<JsonNode> response = exchange(
+                HttpMethod.POST, "/api/v1/playlists/" + id + "/migrate",
+                Map.of("targetProvider", "YOUTUBE"), JsonNode.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().path("target").asText()).isEqualTo("YOUTUBE");
+        assertThat(response.getBody().path("replaced")).isEmpty();
+        assertThat(response.getBody().path("unresolved")).hasSize(1);
+        assertThat(response.getBody().path("unresolved").get(0).path("source").path("title").asText())
+                .isEqualTo("Hello");
+        // Untouched: still the Spotify original.
+        assertThat(response.getBody().path("playlist").path("entries").get(0)
+                .path("track").path("provider").asText()).isEqualTo("SPOTIFY");
+    }
+
+    @Test
+    @DisplayName("migrating requires a target service")
+    void migrateRejectsMissingTarget() {
+        String id = createPlaylist("No Target").path("id").asText();
+
+        ResponseEntity<JsonNode> response = exchange(
+                HttpMethod.POST, "/api/v1/playlists/" + id + "/migrate",
+                Map.of(), JsonNode.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void removingAnOutOfRangePositionIsABadRequest() {
         String id = createPlaylist("Empty").path("id").asText();
 

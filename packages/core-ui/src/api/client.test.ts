@@ -116,6 +116,92 @@ describe("ApiClient", () => {
     });
   });
 
+  describe("migration", () => {
+    const track = {
+      key: "YOUTUBE:yt1",
+      provider: "YOUTUBE" as const,
+      providerTrackId: "yt1",
+      title: "Hello",
+      artists: ["Adele"],
+      artistLine: "Adele",
+      album: null,
+      durationMs: 295000,
+      artworkUrl: null,
+      playable: true,
+    };
+
+    it("migrates the whole playlist when no positions are given", async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          target: "YOUTUBE",
+          playlist: { id: "p1", entries: [] },
+          replaced: [],
+          unresolved: [],
+          alreadyOnTarget: 0,
+          failures: [],
+        }),
+      );
+
+      await client.migratePlaylist("p1", "YOUTUBE");
+
+      const request = lastRequest();
+      expect(request.method).toBe("POST");
+      expect(request.url).toBe(`${baseUrl}/api/v1/playlists/p1/migrate`);
+      await expect(request.json()).resolves.toEqual({
+        targetProvider: "YOUTUBE",
+        positions: [],
+      });
+    });
+
+    it("sends the selected positions when given", async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          target: "SPOTIFY",
+          playlist: { id: "p1", entries: [] },
+          replaced: [],
+          unresolved: [],
+          alreadyOnTarget: 0,
+          failures: [],
+        }),
+      );
+
+      await client.migratePlaylist("p1", "SPOTIFY", [0, 2]);
+
+      await expect(lastRequest().json()).resolves.toEqual({
+        targetProvider: "SPOTIFY",
+        positions: [0, 2],
+      });
+    });
+
+    it("replaces a track in place, carrying the expected key", async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ id: "p1", entries: [] }));
+
+      await client.replaceTrack("p1", 3, track, "SPOTIFY:sp1");
+
+      const request = lastRequest();
+      expect(request.method).toBe("POST");
+      expect(request.url).toBe(`${baseUrl}/api/v1/playlists/p1/tracks/3/replace`);
+      await expect(request.json()).resolves.toMatchObject({
+        trackKey: "YOUTUBE:yt1",
+        title: "Hello",
+        artists: ["Adele"],
+        durationMs: 295000,
+        expectedKey: "SPOTIFY:sp1",
+      });
+    });
+
+    it("surfaces a 409 stale-replacement conflict as an ApiError", async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({ error: "stale_replacement", message: "changed under you" }, 409),
+      );
+
+      await expect(client.replaceTrack("p1", 0, track, "SPOTIFY:old")).rejects.toMatchObject({
+        status: 409,
+        code: "stale_replacement",
+      });
+    });
+  });
+
   describe("search", () => {
     const response: SearchResponse = {
       query: "rick astley",

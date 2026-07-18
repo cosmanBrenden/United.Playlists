@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <!-- Local, self-contained splash. No network, no scripts: just the lockup so a
+       user launching the packaged app sees it is starting up. Transparent
+       background — only the wordmark, emblem and its aura are drawn. -->
+  <style>
+    :root {
+      --text: #e8eaed;
+      --accent: #6c9fff;
+      --bg-raised: #171a21;
+      --logo-wreath: #cdb87e;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+    }
+    body {
+      display: grid;
+      place-items: center;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .lockup {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text);
+      font-family: Georgia, "Times New Roman", Cambria, serif;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      font-size: 2.3rem;
+    }
+    .word {
+      white-space: nowrap;
+      position: relative;
+      z-index: 1;
+      /* Thin black outline so the letters read on any wallpaper behind the
+         transparent window. */
+      text-shadow:
+        -2px -2px 0 rgba(0, 0, 0, 0.6),
+        2px -2px 0 rgba(0, 0, 0, 0.6),
+        -2px 2px 0 rgba(0, 0, 0, 0.6),
+        2px 2px 0 rgba(0, 0, 0, 0.6);
+    }
+    .logo-mark {
+      position: relative;
+      display: inline-flex;
+      flex: 0 0 auto;
+      margin: 0 -16px;
+      z-index: 0;
+    }
+    .logo-icon {
+      display: block;
+      width: 140px;
+      height: 140px;
+      /* A drop shadow stands the emblem off a light background. */
+      filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.55));
+    }
+    /* Breathing aura — the pulse is the "still working" signal. */
+    .logo-mark::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 175%;
+      height: 175%;
+      border-radius: 50%;
+      background: radial-gradient(
+        circle,
+        rgba(108, 159, 255, 0.35) 0%,
+        rgba(108, 159, 255, 0.12) 45%,
+        transparent 70%
+      );
+      filter: blur(12px);
+      z-index: -1;
+      pointer-events: none;
+      animation: aura-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes aura-pulse {
+      0%, 100% { opacity: 0.45; transform: translate(-50%, -50%) scale(0.92); }
+      50%      { opacity: 1;    transform: translate(-50%, -50%) scale(1.08); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .logo-mark::before { animation: none; opacity: 0.8; }
+    }
+  </style>
+</head>
+<body>
+  <h1 class="lockup">
+    <span class="word">United</span>
+    <span class="logo-mark">
+      <svg class="logo-icon" viewBox="12 14 76 76" role="img" aria-label="United Playlists">
+        <circle cx="50" cy="50" r="25" fill="#141418" />
+        <circle cx="50" cy="50" r="25" fill="none" stroke="var(--logo-wreath)" stroke-width="0.8" />
+        <circle cx="50" cy="50" r="21" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.6" />
+        <circle cx="50" cy="50" r="18" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.6" />
+        <circle cx="50" cy="50" r="15" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.6" />
+        <circle cx="50" cy="50" r="12" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.6" />
+        <circle cx="50" cy="50" r="8.5" fill="var(--accent)" />
+        <circle cx="50" cy="50" r="1.8" fill="var(--bg-raised)" />
+        <g fill="var(--logo-wreath)" stroke="var(--logo-wreath)">
+          <g id="branch">
+            <path d="M 47 82 C 30 74, 20 58, 21 42 C 22 32, 30 24, 41 20" fill="none" stroke-width="1.4" stroke-linecap="round" />
+            <ellipse cx="30" cy="74" rx="5" ry="2.2" transform="rotate(130 30 74)" />
+            <ellipse cx="23" cy="64" rx="5" ry="2.2" transform="rotate(153 23 64)" />
+            <ellipse cx="20" cy="53" rx="5" ry="2.2" transform="rotate(174 20 53)" />
+            <ellipse cx="21" cy="43" rx="5" ry="2.2" transform="rotate(-166 21 43)" />
+            <ellipse cx="25" cy="33" rx="5" ry="2.2" transform="rotate(-146 25 33)" />
+            <ellipse cx="32" cy="25" rx="5" ry="2.2" transform="rotate(-126 32 25)" />
+          </g>
+          <use href="#branch" transform="translate(100,0) scale(-1,1)" />
+        </g>
+      </svg>
+    </span>
+    <span class="word">Playlists</span>
+  </h1>
+</body>
+</html>

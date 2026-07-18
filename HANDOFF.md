@@ -60,10 +60,11 @@ Run the app in dev (TWO terminals):
   the Vite server (terminal 1) running first, or the window is blank in dev.
 
 Tests:
-  npm run backend:test           # == cd backend && mvn -B verify  (~260 tests)
-  npm test                       # core-ui vitest (~92 tests)
+  npm run backend:test           # == cd backend && mvn -B verify  (~280 tests)
+  npm test                       # core-ui vitest (~144 tests)
   (cd packages/core-ui && npx tsc --noEmit)               # typecheck
-  (cd packages/desktop && node --test src/oauth-callback.test.js)   # 9 tests
+  (cd packages/desktop && node --test src/*.test.js)      # 16 tests (oauth-callback,
+                                                          #   backend, java-runtime)
   (cd packages/core-ui && npx vitest run --coverage)      # coverage
 
 Build the renderer bundle (what packaged Electron loads from core-ui/dist):
@@ -71,6 +72,12 @@ Build the renderer bundle (what packaged Electron loads from core-ui/dist):
   # desktop `build` script just delegates to this — the Electron shell is plain JS,
   # nothing to bundle. (See hiccup #12: it USED to wrongly run `vite build` in
   # packages/desktop, which fails — there's no index.html there.)
+
+Build installers (renderer + backend jar + Electron shell -> release/):
+  npm run dist                   # installer for the host OS
+  npm run dist:linux|:win|:mac   # a specific OS (build each on that OS / in CI)
+  # Config is the root package.json "build" field; the app needs Java 21 on PATH
+  # (no JRE bundled). Full details in PACKAGING.md.
 
 Live/manual probes (network, disabled in CI — run by hand):
   cd backend && mvn -B test -Dtest=NewPipeLiveProbeTest -Dnewpipe.live=true
@@ -192,6 +199,15 @@ Handy env vars the backend reads (Electron sets most):
     newpipe.auto-update=false so the suite never hits the network. Live behavior is in
     the hand-run NewPipeLiveProbeTest.
 
+#17 window.prompt / window.alert / window.confirm ARE DISABLED IN ELECTRON. They
+    silently return null (prompt) or do nothing — no error, no dialog. The old
+    "+ New playlist" button called window.prompt for the name, so on desktop it
+    looked like playlist creation was simply missing ("users can only import"). The
+    backend create endpoint had worked all along. Fix: a real in-app modal
+    (components/CreatePlaylistDialog). RULE: never reach for the window.* dialogs in
+    the renderer — build a component, or (for a truly native dialog) go through the
+    Electron main process via the preload bridge.
+
 
 3. KEY DESIGN DECISIONS (the "why", so you don't undo them)
 -----------------------------------------------------------
@@ -234,13 +250,85 @@ Handy env vars the backend reads (Electron sets most):
   SDK; DirectAudioAdapter = <audio> for YT/SC). Facade swaps adapters mid-playlist so
   a mixed playlist "just works". Adding a service = one adapter.
 
+  The facade owns everything the UI treats as "the player": transport, the QUEUE
+  (setQueue + playQueueItem + moveInQueue/removeFromQueue/addToQueue, all keeping the
+  playing-track index correct through edits), SHUFFLE (playShuffled + setShuffle,
+  Fisher-Yates, single up-front shuffle — reshuffles only the tracks still AHEAD so
+  the current one keeps playing), PROGRESS (position/buffered/duration polled once a
+  second via refreshProgress, only while playing), and NEXT-TRACK PREFETCH. Queue +
+  index + shuffle live in PlayerState, so the transport bar and the queue panel are
+  just subscribers — no separate store.
+
+  ADAPTER CONTRACT additions the facade relies on:
+    - getBufferedMs()/getDurationMs(): drive the progress bar's "loaded ahead" span
+      and the real (not metadata-estimate) duration. Spotify returns null for
+      buffered on purpose — the Web Playback SDK exposes no buffer window, so the UI
+      HIDES that layer rather than inventing one. DirectAudio reads audio.buffered
+      (the contiguous range covering the play head) and audio.duration.
+    - prepare(ticket) [OPTIONAL, best-effort, must never throw]: pre-load the next
+      track. The facade fetches the NEXT track's ticket as soon as the current one
+      starts, caches it (keyed by track so a queue edit discards a stale prefetch),
+      and calls prepare(). DirectAudioAdapter pre-loads the stream into a SECOND
+      <audio> element and promotes it on play instead of reloading — this is what
+      makes YT/SC track-to-track transitions near-seamless. Spotify no-ops (its SDK
+      can only play "now", not warm a specific next URI). On advance the facade reuses
+      the cached ticket, skipping the network round-trip.
+
+- CROSS-SERVICE MIGRATION reuses the search fan-out rather than adding a parallel
+  path. MigrationService, per selected track, calls SearchService.searchAll ONCE:
+  the target's slice of those results feeds the auto-match decision, and the WHOLE
+  result set (every service) becomes the candidate pool for the manual picker. So
+  "search the target" and "offer alternatives from everywhere" cost one query, not
+  two.
+
+  TrackMatcher is the judgement, kept pure and heavily unit-tested because it is the
+  thing that can silently do the wrong thing. It normalises titles (lowercase, strip
+  accents, drop "(feat …)"/"- Remastered" qualifiers) and scores title + artist token
+  overlap. The bar for EXACT — the only quality that auto-replaces — is deliberately
+  high: identical cleaned title, artist overlap, AND durations within 4s when both are
+  known. That duration gate is what stops a studio cut being silently swapped for a
+  live/extended take that shares a title and artist. bestExact also DECLINES when two
+  different candidates are both EXACT (an ambiguous query) rather than guessing.
+
+  Replacement is IN PLACE (Playlist.replaceAt / PlaylistEntry.replaceTrack), never
+  remove-then-add, so positions never shift — a batch of ten replacements can't
+  renumber the rows under itself, and the manual picker's positions stay valid after
+  the automatic ones are applied. The replace endpoint takes an expectedKey guard and
+  409s if the slot changed under a stale view (StaleReplacementException).
+
+  Why the search is NOT inside a DB transaction, and why tracks are processed
+  serially rather than in parallel: same reasons as search generally — don't hold a
+  connection across seconds of HTTP, and don't fire N provider searches at once and
+  get rate-limited (YouTube bills 100 units each). MigrationService reads the
+  playlist, does all its searching with no txn held, and applies the confident
+  replacements in one short write at the end.
+
+  Endpoints: POST /playlists/{id}/migrate (returns replaced + unresolved-with-
+  candidates + failures) and POST /playlists/{id}/tracks/{position}/replace (applies
+  one manual choice). Frontend: PlaylistView owns selection + the migrate bar, both
+  behind an opt-in "⇄ Migrate" header toggle (migrateMode) so the row checkboxes stay
+  out of the way during normal listening;
+  MigrationDialog is the resolve modal (candidates from all services, target's own
+  results flagged with an accent rail). App computes migrationTargets = services that
+  are available AND searchable now (connected authenticated, or anonymous scraper).
+
 
 4. ROADMAP / WHAT'S LEFT
 ------------------------
-Done: playlists (create/edit/reorder/delete, mixed-service), Spotify (OAuth + import
-  + search + playback via Web Playback SDK), YouTube + SoundCloud (scraped search +
-  import-by-URL + direct-audio playback), in-app credential entry, extractor
-  auto-update, all the security hardening above.
+Done: playlists (create via in-app modal / edit / reorder / delete, mixed-service),
+  Spotify (OAuth + import + search + playback via Web Playback SDK), YouTube +
+  SoundCloud (scraped search + import-by-URL + direct-audio playback), in-app
+  credential entry, extractor auto-update, all the security hardening above.
+  PLAYER UX: seekable progress bar with a buffered indicator, shuffle (per-playlist
+  + a transport toggle), an editable queue panel (jump / reorder / remove), and
+  next-track pre-buffering for smoother same-service transitions. See the PLAYER
+  FACADE design note above for how these hang together.
+  CROSS-SERVICE MIGRATION: select tracks (or the whole playlist), pick a target
+  service, and Migrate. The backend searches the target per track; a confident,
+  unambiguous match (same cleaned title + overlapping artist + duration within 4s)
+  is swapped in place automatically, and anything else comes back in a resolve modal
+  listing candidates from EVERY service to choose from (or keep the original). See
+  the CROSS-SERVICE MIGRATION design note below.
 
 Not done / next:
   1. APPLE MUSIC — stubbed (AppleMusicProvider throws, isSetupSupported=false). Needs
@@ -256,17 +344,28 @@ Not done / next:
      no JRE is bundled, though main.js still prefers resources/jre/bin/java if one is
      added later. STILL OPEN: production Widevine VMP signing (packaging/afterPack.cjs
      runs it best-effort — needs a castLabs EVS account for Spotify playback in
-     distributed builds), app icons, and OS code-signing/notarization. Note this build
+     distributed builds) and OS code-signing/notarization. Note this build
      scrapes YT/SC, which blocks app-store distribution regardless.
+     APP ICON: done — packaging/icon.png (1024², generated from packaging/icon.svg,
+     the vinyl-wreath emblem). electron-builder auto-derives .icns/.ico/Linux sizes
+     from it since buildResources=packaging; the running window icon is
+     packages/desktop/src/assets/icon.png (see createWindow in main.js).
   3. MOBILE — core-ui is deliberately shell-agnostic; Capacitor could wrap it. But
      mobile playback needs native Spotify/MusicKit SDK plugins, and a hosted backend
      becomes a real conversation (tokens can't just live on-device the same way).
-  4. GAPLESS PLAYBACK across services — swapping SDKs mid-playlist has an audible gap.
+  4. GAPLESS PLAYBACK across services — next-track PREFETCH now warms the upcoming
+     track (DirectAudioAdapter pre-loads it into a second <audio>), so YT/SC ->
+     YT/SC transitions are near-seamless. Two gaps remain: (a) crossing SDKs
+     (Spotify <-> DirectAudio) still swaps adapters and has an audible gap — Spotify's
+     SDK can't be pre-warmed for a specific next URI; (b) even same-service is
+     "near-instant", not sample-accurate gapless (that needs Web Audio crossfade /
+     MediaSource, a bigger job).
   5. YOUTUBE MUSIC (not just YouTube) — no public API; NewPipe reaches YouTube proper,
      not the YT Music premium catalog.
-  6. Nice-to-haves: playlist reordering across services already works; could add
-     cross-service "find this track on another service", dedup, offline metadata
-     refresh, drag-and-drop, keyboard shortcuts.
+  6. Nice-to-haves: playlist reordering across services already works; cross-service
+     "find this track on another service" is now DONE (see CROSS-SERVICE MIGRATION);
+     could still add dedup, offline metadata refresh, drag-and-drop, keyboard
+     shortcuts.
 
 
 5. FILE MAP (backend/src/main/java/dev/unitedplaylists/)
@@ -285,7 +384,9 @@ Not done / next:
     oauth/       OAuthClient, OAuthProperties, Pkce, TokenSet, AuthorizationRequest
   service/       SearchService (parallel fan-out on virtual threads), PlaylistService,
                  ImportService, PlaybackService, ConnectionService,
-                 ProviderSettingsService, EnvironmentCredentials, OAuthFlowService
+                 ProviderSettingsService, EnvironmentCredentials, OAuthFlowService,
+                 MigrationService (cross-service migrate job), TrackMatcher (pure
+                 same-song judgement; heavily unit-tested)
   web/           PlaylistController, SearchController, PlaybackController,
                  ConnectionController, ExtractorController, GlobalExceptionHandler,
                  dto/Dtos
@@ -296,17 +397,34 @@ Not done / next:
 
 Frontend (packages/core-ui/src/):
   api/           client.ts (typed backend client), types.ts
-  player/        Player.ts (facade), SpotifyAdapter.ts, DirectAudioAdapter.ts, types.ts
-  views/         SearchView, PlaylistView, ConnectionsView, ProviderSetupForm
-  components/    PlayerBar, ServiceBadge
+  player/        Player.ts (facade: transport + queue + shuffle + progress + prefetch),
+                 SpotifyAdapter.ts, DirectAudioAdapter.ts (2nd <audio> for pre-buffer),
+                 types.ts (PlayerState carries queue/index/shuffle/buffered; the
+                 PlayerAdapter contract incl. getBufferedMs/getDurationMs/prepare)
+  views/         SearchView, PlaylistView (Play all + Shuffle + select/migrate),
+                 ConnectionsView, ProviderSetupForm
+  components/    PlayerBar (transport + ProgressBar + shuffle/queue toggles),
+                 ProgressBar (seekable, played+buffered layers, commit-on-release),
+                 QueuePanel (jump/reorder/remove drawer),
+                 CreatePlaylistDialog (modal; replaces the Electron-dead window.prompt),
+                 MigrationDialog (resolve modal: candidates from all services),
+                 ServiceBadge
+  util/          time.ts (formatDuration, shared by ProgressBar + PlaylistView)
   App.tsx, main.tsx (bootstrap; reads backend info from the Electron bridge)
 
 Desktop (packages/desktop/src/):
-  main.js        Electron main: password-store, Widevine, token.key, spawn backend
-                 (with loader.path for extractor updates), OAuth loopback, IPC
+  main.js        Electron main: password-store, Widevine, token.key, verifyJava,
+                 spawn backend (with loader.path for extractor updates), OAuth
+                 loopback, IPC
   backend.js     BackendProcess: spawns java, reads chosen port from stdout
+  java-runtime.js  pure Java-version helpers (parse/compare) used by main.js's
+                 startup check; unit-tested without Electron
   oauth-callback.js   one-shot loopback listener for the OAuth redirect
   preload.cjs    the 4-call bridge exposed to the renderer
+
+Packaging (root):
+  packaging/afterPack.cjs   electron-builder hook: best-effort Castlabs VMP signing
+  package.json "build"      electron-builder config (targets, backend.jar resource)
 
 
 6. GOTCHAS FOR THE NEXT SESSION

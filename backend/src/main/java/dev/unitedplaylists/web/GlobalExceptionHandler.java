@@ -75,6 +75,14 @@ public class GlobalExceptionHandler {
                 Instant.now()));
     }
 
+    @ExceptionHandler(PlaylistService.StaleReplacementException.class)
+    public ResponseEntity<ApiError> handleStaleReplacement(PlaylistService.StaleReplacementException e) {
+        // A lost race, not a bug: the playlist changed under the caller. 409 tells the
+        // UI to reload and try again rather than surface a generic error.
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("stale_replacement", e.getMessage()));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException e) {
         List<String> details = e.getBindingResult().getFieldErrors().stream()

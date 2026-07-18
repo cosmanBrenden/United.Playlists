@@ -2,11 +2,15 @@ package dev.unitedplaylists.web;
 
 import dev.unitedplaylists.domain.Track;
 import dev.unitedplaylists.domain.TrackRef;
+import dev.unitedplaylists.service.MigrationService;
 import dev.unitedplaylists.service.PlaylistService;
 import dev.unitedplaylists.web.dto.Dtos.AddTrackRequest;
 import dev.unitedplaylists.web.dto.Dtos.CreatePlaylistRequest;
+import dev.unitedplaylists.web.dto.Dtos.MigrateRequest;
+import dev.unitedplaylists.web.dto.Dtos.MigrationResultDto;
 import dev.unitedplaylists.web.dto.Dtos.MoveTrackRequest;
 import dev.unitedplaylists.web.dto.Dtos.PlaylistDto;
+import dev.unitedplaylists.web.dto.Dtos.ReplaceTrackRequest;
 import dev.unitedplaylists.web.dto.Dtos.UpdatePlaylistRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -32,9 +36,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class PlaylistController {
 
     private final PlaylistService playlistService;
+    private final MigrationService migrationService;
 
-    public PlaylistController(PlaylistService playlistService) {
+    public PlaylistController(PlaylistService playlistService, MigrationService migrationService) {
         this.playlistService = playlistService;
+        this.migrationService = migrationService;
     }
 
     @GetMapping
@@ -72,15 +78,8 @@ public class PlaylistController {
             description = "The track may come from a different service to the rest of the playlist.")
     public ResponseEntity<PlaylistDto> addTrack(
             @PathVariable UUID id, @Valid @RequestBody AddTrackRequest request) {
-        TrackRef ref = TrackRef.fromKey(request.trackKey());
-        Track track = new Track(
-                ref,
-                request.title(),
-                request.artists() == null ? List.of() : request.artists(),
-                request.album(),
-                request.durationMs() == null ? null : Duration.ofMillis(request.durationMs()),
-                request.artworkUrl(),
-                true);
+        Track track = trackFrom(request.trackKey(), request.title(), request.artists(),
+                request.album(), request.durationMs(), request.artworkUrl());
         PlaylistDto updated = PlaylistDto.from(playlistService.addTrack(id, track));
         return ResponseEntity.status(HttpStatus.CREATED).body(updated);
     }
@@ -95,6 +94,53 @@ public class PlaylistController {
     @Operation(summary = "Reorder a track")
     public PlaylistDto moveTrack(@PathVariable UUID id, @Valid @RequestBody MoveTrackRequest request) {
         return PlaylistDto.from(playlistService.moveTrack(id, request.from(), request.to()));
+    }
+
+    @PostMapping("/{id}/tracks/{position}/replace")
+    @Operation(
+            summary = "Replace a track in place with the same song on another service",
+            description = "Keeps the track's position. Used to apply a manual choice from a "
+                    + "migration, or to swap one track on its own.")
+    public PlaylistDto replaceTrack(
+            @PathVariable UUID id,
+            @PathVariable int position,
+            @Valid @RequestBody ReplaceTrackRequest request) {
+        Track track = trackFrom(request.trackKey(), request.title(), request.artists(),
+                request.album(), request.durationMs(), request.artworkUrl());
+        return PlaylistDto.from(
+                playlistService.replaceTrack(id, position, track, request.expectedKey()));
+    }
+
+    @PostMapping("/{id}/migrate")
+    @Operation(
+            summary = "Migrate tracks to another service",
+            description = """
+                    Searches the target service for each selected track (the whole playlist
+                    if no positions are given). Confident, unambiguous matches are replaced
+                    automatically; anything else is returned in `unresolved` with candidates
+                    from every service for the user to choose from.
+
+                    Tracks already on the target service are skipped and counted in
+                    `alreadyOnTarget`.
+                    """)
+    public MigrationResultDto migrate(
+            @PathVariable UUID id, @Valid @RequestBody MigrateRequest request) {
+        return MigrationResultDto.from(
+                migrationService.migrate(id, request.targetProvider(), request.positions()));
+    }
+
+    private static Track trackFrom(
+            String trackKey, String title, List<String> artists, String album,
+            Long durationMs, String artworkUrl) {
+        TrackRef ref = TrackRef.fromKey(trackKey);
+        return new Track(
+                ref,
+                title,
+                artists == null ? List.of() : artists,
+                album,
+                durationMs == null ? null : Duration.ofMillis(durationMs),
+                artworkUrl,
+                true);
     }
 
     @DeleteMapping("/{id}")

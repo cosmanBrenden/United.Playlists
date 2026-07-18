@@ -146,6 +146,19 @@ export class SpotifyAdapter implements PlayerAdapter {
     return state?.position ?? null;
   }
 
+  async getBufferedMs(): Promise<number | null> {
+    // The Web Playback SDK streams DRM audio and exposes no buffer window. Returning
+    // null tells the UI to omit the "loaded ahead" portion of the bar rather than
+    // invent one — Spotify's own player never shows buffering either.
+    return null;
+  }
+
+  async getDurationMs(): Promise<number | null> {
+    const state = await this.#player?.getCurrentState();
+    const duration = state?.duration;
+    return duration !== undefined && duration > 0 ? duration : null;
+  }
+
   onEnded(callback: () => void): void {
     this.#onEndedCallback = callback;
   }
