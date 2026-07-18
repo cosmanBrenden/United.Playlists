@@ -60,8 +60,8 @@ Run the app in dev (TWO terminals):
   the Vite server (terminal 1) running first, or the window is blank in dev.
 
 Tests:
-  npm run backend:test           # == cd backend && mvn -B verify  (~260 tests)
-  npm test                       # core-ui vitest (~92 tests)
+  npm run backend:test           # == cd backend && mvn -B verify  (~280 tests)
+  npm test                       # core-ui vitest (~144 tests)
   (cd packages/core-ui && npx tsc --noEmit)               # typecheck
   (cd packages/desktop && node --test src/*.test.js)      # 16 tests (oauth-callback,
                                                           #   backend, java-runtime)

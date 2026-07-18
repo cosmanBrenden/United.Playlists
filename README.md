@@ -34,6 +34,10 @@ Two things are worth understanding before reading the code.
 
 **Imported playlists are copies.** The app never writes back to the origin service. This is enforced structurally: `MusicProvider` has no playlist-write method, so a provider cannot write back even by mistake. Editing an imported playlist changes your copy only.
 
+## Moving tracks between services
+
+A track that lives on one service can be swapped for the same song on another. Open a playlist, press **⇄ Migrate**, tick the tracks you want (or migrate the whole playlist), and pick a destination service. The app searches that service for each track: a confident, unambiguous match is replaced in place automatically, and anything it can't be sure about opens a picker showing candidates from *every* service so you choose the right one — or keep the original. Nothing is touched on the origin service; as everywhere else, you are only editing your local copy.
+
 ## Requirements
 
 **To run an installed build**, you need only:
