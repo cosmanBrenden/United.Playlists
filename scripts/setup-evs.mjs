@@ -18,11 +18,19 @@
  *   4. verifies the signer is ready.
  *
  * USAGE
- *   node scripts/setup-evs.mjs                 # log in an existing account (reauth)
- *   node scripts/setup-evs.mjs --signup        # create a new account, then confirm
- *   node scripts/setup-evs.mjs --signup --confirm 123456   # confirm with an emailed code
+ *   node scripts/setup-evs.mjs                 # asks whether to log in or create an account
+ *   node scripts/setup-evs.mjs --login         # log in to an existing account (reauth)
+ *   node scripts/setup-evs.mjs --signup        # create a new account (prompts for the
+ *                                              #   emailed confirmation code)
+ *   node scripts/setup-evs.mjs --signup --confirm 123456   # CI: confirm with the code
  *   node scripts/setup-evs.mjs --skip-install  # don't touch pip, just authenticate
  *   node scripts/setup-evs.mjs --ensure        # best-effort refresh, used by `npm run dist`
+ *
+ * With no --login/--signup flag and a terminal attached, the script asks which you
+ * want, so a fresh machine that has never had an EVS account is handled — you are not
+ * assumed to have one. It also offers to create an account if a login attempt fails
+ * because none exists. Without a terminal (CI), it defaults to login; pass --signup
+ * explicitly to create an account there.
  *
  * The `--ensure` mode is what the dist scripts call before packaging: it refreshes the
  * cached EVS session (or logs in non-interactively if UP_EVS_ACCOUNT/PASSWORD are set)
@@ -51,6 +59,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
 
 const args = new Set(process.argv.slice(2));
 if (args.has("--help") || args.has("-h")) {
@@ -58,9 +68,13 @@ if (args.has("--help") || args.has("-h")) {
 }
 
 const SIGNUP = args.has("--signup");
+const LOGIN = args.has("--login");
 const SKIP_INSTALL = args.has("--skip-install");
 const ENSURE = args.has("--ensure");
 const confirmCode = readFlagValue("--confirm");
+
+/** Whether a real terminal is attached, so we can prompt the user. */
+const INTERACTIVE = Boolean(stdin.isTTY && stdout.isTTY);
 
 /** Prints a message and exits non-zero. */
 function die(message) {
@@ -80,9 +94,10 @@ function printUsageAndExit(code) {
     [
       "Set up Castlabs EVS so packaged builds can be VMP-signed for Spotify playback.",
       "",
-      "  node scripts/setup-evs.mjs               log in an existing EVS account",
+      "  node scripts/setup-evs.mjs               ask whether to log in or create an account",
+      "  node scripts/setup-evs.mjs --login       log in to an existing EVS account",
       "  node scripts/setup-evs.mjs --signup      create a new account",
-      "  node scripts/setup-evs.mjs --signup --confirm <code>   confirm a new account",
+      "  node scripts/setup-evs.mjs --signup --confirm <code>   confirm a new account (CI)",
       "  node scripts/setup-evs.mjs --skip-install               skip the pip step",
       "",
       "Credentials via env: UP_EVS_ACCOUNT, UP_EVS_PASSWORD (+ UP_EVS_EMAIL,",
@@ -213,7 +228,113 @@ function firstWorkingPython() {
   return null;
 }
 
-function main() {
+/** Resolves to "signup" or "login". Explicit flag wins; else ask, or default to login. */
+async function chooseMode() {
+  if (SIGNUP) return "signup";
+  if (LOGIN) return "login";
+  if (!INTERACTIVE) {
+    // No terminal to ask at (CI): default to login. Callers create accounts with the
+    // explicit --signup flag there.
+    return "login";
+  }
+  const rl = createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = await rl.question(
+      "\n[evs] Do you already have a Castlabs EVS account?\n" +
+        "        [1] Yes — log in on this machine\n" +
+        "        [2] No  — create one now\n" +
+        "      Choose [1/2]: ",
+    );
+    return answer.trim().startsWith("2") ? "signup" : "login";
+  } finally {
+    rl.close();
+  }
+}
+
+/** Asks a yes/no question at the terminal; defaults to no on empty input. */
+async function askYesNo(question) {
+  const rl = createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = await rl.question(`[evs] ${question} [y/N] `);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Creates and confirms an EVS account. Interactively, the tool prompts for any missing
+ * details and for the emailed confirmation code, so one command does the whole thing.
+ * Non-interactively it needs a `--confirm <code>` to finish; without one it returns
+ * false after starting signup, having told the caller how to complete it.
+ *
+ * @returns true when the account is ready, false when it still needs a confirmation code
+ */
+function doSignup(python) {
+  const account = [python, "-m", "castlabs_evs.account"];
+  // Only go non-interactive when we truly cannot prompt for the code — i.e. no terminal
+  // and no code yet. A terminal lets the tool ask for the code itself (best UX).
+  const canConfirmNow = INTERACTIVE || Boolean(confirmCode);
+  const modeFlag = canConfirmNow ? [] : ["-n"];
+
+  console.log("[evs] creating a new EVS account …");
+  const signup = run(account[0], [
+    ...account.slice(1),
+    ...modeFlag,
+    ...withCreds("signup", { includeSignupFields: true }),
+  ]);
+  if (signup.status !== 0) {
+    die("Signup failed. Check the output above.");
+  }
+
+  // A terminal-driven signup already confirmed inline. Otherwise confirm with the code
+  // if we have it, or tell the caller how to finish.
+  if (INTERACTIVE && !confirmCode) {
+    return true;
+  }
+  if (confirmCode) {
+    const confirm = run(account[0], [
+      ...account.slice(1),
+      "-n",
+      ...withCreds("confirm-signup"),
+      "-C",
+      confirmCode,
+    ]);
+    if (confirm.status !== 0) {
+      die("Confirmation failed. Re-run with the correct --confirm <code>.");
+    }
+    return true;
+  }
+  console.log(
+    "\n[evs] Account created. Check your email for the confirmation code, then run:\n" +
+      "        npm run setup:evs -- --signup --confirm <code>",
+  );
+  return false;
+}
+
+/**
+ * Logs into an existing EVS account (reauth). Non-interactive when account + password
+ * are in the environment; otherwise the tool prompts.
+ *
+ * @returns true on success, false on failure (caller decides what to do next)
+ */
+function doLogin(python) {
+  const account = [python, "-m", "castlabs_evs.account"];
+  const nonInteractive = haveNonInteractiveCreds();
+  console.log(
+    nonInteractive
+      ? "[evs] logging in (non-interactive) …"
+      : "[evs] logging in (you may be prompted) …",
+  );
+  const reauth = run(account[0], [
+    ...account.slice(1),
+    ...(nonInteractive ? ["-n"] : []),
+    ...withCreds("reauth"),
+  ]);
+  return reauth.status === 0;
+}
+
+async function main() {
   if (ENSURE) {
     ensureForDist();
     return;
@@ -233,55 +354,32 @@ function main() {
     installEvs(python);
   }
 
-  // `-n` puts the account tool in non-interactive mode; only safe when we can supply
-  // every answer it would otherwise prompt for.
-  const nonInteractive = haveNonInteractiveCreds();
-  const base = [python, "-m", "castlabs_evs.account"];
-  const modeFlag = nonInteractive ? ["-n"] : [];
+  // Decide up front whether we are logging in or creating an account. An explicit flag
+  // wins; otherwise ask (terminal) or default to login (CI).
+  const mode = await chooseMode();
 
-  if (SIGNUP) {
-    console.log("[evs] creating a new EVS account …");
-    const signup = run(base[0], [
-      ...base.slice(1),
-      ...modeFlag,
-      ...withCreds("signup", { includeSignupFields: true }),
-    ]);
-    if (signup.status !== 0) {
-      die("Signup failed. Check the output above.");
-    }
-    // EVS emails a confirmation code. If the caller already has it, confirm now;
-    // otherwise tell them how to finish.
-    if (confirmCode) {
-      const confirm = run(base[0], [
-        ...base.slice(1),
-        ...modeFlag,
-        ...withCreds("confirm-signup"),
-        "-C",
-        confirmCode,
-      ]);
-      if (confirm.status !== 0) {
-        die("Confirmation failed. Re-run with the correct --confirm <code>.");
-      }
-    } else {
-      console.log(
-        "\n[evs] Account created. Check your email for the confirmation code, then run:\n" +
-          "        node scripts/setup-evs.mjs --signup --confirm <code>\n" +
-          "      (or just `npm run setup:evs` once confirmed, to verify).",
-      );
-      return;
+  if (mode === "signup") {
+    if (!doSignup(python)) {
+      return; // signup started but needs an emailed code; message already printed
     }
   } else {
-    console.log(
-      nonInteractive
-        ? "[evs] authenticating EVS account (non-interactive) …"
-        : "[evs] authenticating EVS account (you may be prompted) …",
-    );
-    const reauth = run(base[0], [...base.slice(1), ...modeFlag, ...withCreds("reauth")]);
-    if (reauth.status !== 0) {
-      die(
-        "Authentication failed. Set UP_EVS_ACCOUNT and UP_EVS_PASSWORD (or run " +
-          "without them to be prompted), or use --signup to create an account first.",
-      );
+    // Login. If it fails on a fresh machine because no account exists, don't dead-end —
+    // offer to create one right here, which is the whole point of this change.
+    if (!doLogin(python)) {
+      const create =
+        INTERACTIVE &&
+        (await askYesNo("Log in failed. Create a new EVS account now instead?"));
+      if (create) {
+        if (!doSignup(python)) {
+          return;
+        }
+      } else {
+        die(
+          "Authentication failed. If you have no EVS account yet, run " +
+            "`npm run setup:evs -- --signup` to create one; otherwise check your " +
+            "UP_EVS_ACCOUNT / UP_EVS_PASSWORD (or run without them to be prompted).",
+        );
+      }
     }
   }
 
@@ -298,4 +396,4 @@ function main() {
   );
 }
 
-main();
+main().catch((err) => die(String(err?.stack ?? err)));

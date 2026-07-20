@@ -119,21 +119,22 @@ Each command builds the renderer and the backend jar first, then packages them w
 
 ### Signing for Spotify playback (Widevine VMP)
 
-Spotify playback in a *packaged* build needs the app to be VMP-signed with a Castlabs EVS production key (a dev run from source is signed automatically; a distributed build is not). The `dist` scripts do this for you — they refresh the EVS session and `packaging/afterPack.cjs` signs the app during packaging — once you have logged in **once** on the machine:
+Spotify playback in a *packaged* build needs the app to be VMP-signed with a Castlabs EVS production key (a dev run from source is signed automatically; a distributed build is not). The `dist` scripts do this for you — they refresh the EVS session and `packaging/afterPack.cjs` signs the app during packaging — once you have set EVS up **once** on the machine:
 
 ```bash
-npm run setup:evs          # installs the Castlabs EVS tool and logs you in
+npm run setup:evs          # installs the Castlabs EVS tool, then asks whether to
+                           #   log in or create an account (no account needed up front)
 npm run dist               # build; the app is VMP-signed automatically
 ```
 
-`setup:evs` needs **Python 3** (see [Requirements](#requirements)). It creates the account for you too:
+`setup:evs` needs **Python 3** (see [Requirements](#requirements)). On a fresh machine with no EVS account it walks you through creating one (it prompts for the code EVS emails you); if you already have an account it logs in. You can also skip the prompt:
 
 ```bash
-npm run setup:evs -- --signup                 # create a new EVS account
-npm run setup:evs -- --signup --confirm 123456 # confirm it with the emailed code
+npm run setup:evs -- --login    # log in to an existing account
+npm run setup:evs -- --signup   # create a new account
 ```
 
-Credentials can be supplied non-interactively via `UP_EVS_ACCOUNT` / `UP_EVS_PASSWORD` (and `UP_EVS_EMAIL` / `UP_EVS_FIRST_NAME` / `UP_EVS_LAST_NAME` for signup), which is what CI would use. If EVS is not set up, `npm run dist` still produces a working installer — YouTube and SoundCloud play; only Spotify playback is disabled in that build. Set `UP_VMP_REQUIRED=1` to make missing signing fail the build instead.
+Credentials can be supplied non-interactively via `UP_EVS_ACCOUNT` / `UP_EVS_PASSWORD` (and `UP_EVS_EMAIL` / `UP_EVS_FIRST_NAME` / `UP_EVS_LAST_NAME` for signup); in CI, add `--confirm <code>` to finish a signup with the emailed code. If EVS is not set up, `npm run dist` still produces a working installer — YouTube and SoundCloud play; only Spotify playback is disabled in that build. Set `UP_VMP_REQUIRED=1` to make missing signing fail the build instead.
 
 Full details are in [PACKAGING.md](PACKAGING.md).
 

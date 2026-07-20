@@ -103,14 +103,17 @@ Two pieces run automatically during `npm run dist*`:
     works — YouTube and SoundCloud play; only Spotify playback is disabled in that build.
   - Set UP_VMP_REQUIRED=1 to make a signing failure fail the build instead.
 
-To enable it, log in ONCE on the machine, then just build:
-  npm run setup:evs                       # installs castlabs-evs + logs into EVS
+To enable it, set EVS up ONCE on the machine, then just build:
+  npm run setup:evs                       # installs castlabs-evs, then ASKS whether to
+                                          #   log in or create an account — no existing
+                                          #   account is assumed
   npm run dist                            # auto-refreshes the session and signs
 
-  # setup:evs can create the account too, and take credentials from the environment:
-  npm run setup:evs -- --signup                       # create an account (emails a code)
-  npm run setup:evs -- --signup --confirm <code>      # confirm it
-  UP_EVS_ACCOUNT=… UP_EVS_PASSWORD=… npm run setup:evs # non-interactive (CI)
+  # Skip the prompt with an explicit mode; supply credentials via the environment:
+  npm run setup:evs -- --login                        # log into an existing account
+  npm run setup:evs -- --signup                       # create one (prompts for the code)
+  npm run setup:evs -- --signup --confirm <code>      # CI: finish signup with the code
+  UP_EVS_ACCOUNT=… UP_EVS_PASSWORD=… npm run setup:evs -- --login   # non-interactive (CI)
 
   # Under the hood setup:evs wraps these; you can still run them by hand:
   pip install --upgrade castlabs-evs
