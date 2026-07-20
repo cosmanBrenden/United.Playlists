@@ -163,7 +163,7 @@ export function App({ client, player, authorize, openExternal }: AppProps): JSX.
                     onClick={() => setSelectedId(playlist.id)}
                     aria-pressed={selectedId === playlist.id}
                   >
-                    {playlist.name}
+                    <span className="name">{playlist.name}</span>
                     <span className="count">{playlist.trackCount}</span>
                   </button>
                 </li>

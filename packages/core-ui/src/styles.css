@@ -40,6 +40,10 @@ body {
   border-right: 1px solid var(--border);
   padding: 1rem;
   overflow-y: auto;
+  /* The sidebar scrolls vertically only. Without this, overflow-y:auto promotes
+     overflow-x to auto too, so a single long playlist name would add a horizontal
+     scrollbar — long names ellipsize (see .playlist-list .name) instead. */
+  overflow-x: hidden;
 }
 
 .content {
@@ -183,9 +187,25 @@ button.danger:hover:not(:disabled) {
   text-align: left;
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
   margin-bottom: 0.25rem;
   background: transparent;
   border-color: transparent;
+}
+
+/* Let a long playlist name truncate rather than widen the row (which would push a
+   horizontal scrollbar onto the sidebar). min-width:0 lets the flex item shrink
+   below its content width so text-overflow can take effect; the count stays put. */
+.playlist-list .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlist-list .count {
+  flex: 0 0 auto;
 }
 
 /* The selected playlist needs its own rule: the generic
