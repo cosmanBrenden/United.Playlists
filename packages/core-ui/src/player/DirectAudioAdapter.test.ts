@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DirectAudioAdapter } from "./DirectAudioAdapter";
+import { DirectAudioAdapter, type HlsEngine, type HlsSupport } from "./DirectAudioAdapter";
 import type { PlaybackTicket } from "../api/types";
 
 /** A single buffered span, shaped like the DOM TimeRanges the adapter reads. */
@@ -41,6 +41,9 @@ class FakeAudio {
     if (name === "src") this.src = "";
   }
 
+  /** Present only when a test opts into native HLS; absent means "Chromium-like". */
+  canPlayType?: (type: string) => string;
+
   load(): void {
     this.loadCalls++;
   }
@@ -63,8 +66,46 @@ const ticket = (streamUrl: string): PlaybackTicket => ({
   trackKey: "YOUTUBE:vid1",
   provider: "YOUTUBE",
   method: "DIRECT_AUDIO",
-  params: { streamUrl, trackId: "vid1" },
+  params: { streamUrl, protocol: "progressive", trackId: "vid1" },
 });
+
+/** An HLS ticket, as the backend flags SoundCloud tracks. */
+const hlsTicket = (streamUrl: string): PlaybackTicket => ({
+  trackKey: "SOUNDCLOUD:t1",
+  provider: "SOUNDCLOUD",
+  method: "DIRECT_AUDIO",
+  params: { streamUrl, protocol: "hls", trackId: "t1" },
+});
+
+/** Records how the adapter drives hls.js, standing in for the real engine. */
+class FakeHls implements HlsEngine {
+  loadedSource?: string;
+  attachedTo?: HTMLMediaElement;
+  destroyed = false;
+  loadSource(url: string): void {
+    this.loadedSource = url;
+  }
+  attachMedia(media: HTMLMediaElement): void {
+    this.attachedTo = media;
+  }
+  destroy(): void {
+    this.destroyed = true;
+  }
+}
+
+/** An HlsSupport whose engines the test can inspect; `supported` toggles capability. */
+function fakeHlsSupport(supported = true): HlsSupport & { engines: FakeHls[] } {
+  const engines: FakeHls[] = [];
+  return {
+    engines,
+    isSupported: () => supported,
+    create: () => {
+      const engine = new FakeHls();
+      engines.push(engine);
+      return engine;
+    },
+  };
+}
 
 describe("DirectAudioAdapter", () => {
   let audios: FakeAudio[];
@@ -211,6 +252,99 @@ describe("DirectAudioAdapter", () => {
       // The unrelated track loads on the main element as usual.
       expect(fake.src).toBe("https://stream.example/other.webm");
       expect(fake.playCalls).toBe(1);
+    });
+  });
+
+  describe("HLS playback (SoundCloud)", () => {
+    let support: ReturnType<typeof fakeHlsSupport>;
+    let hlsAdapter: DirectAudioAdapter;
+    let hlsFake: FakeAudio;
+
+    beforeEach(async () => {
+      support = fakeHlsSupport(true);
+      hlsAdapter = new DirectAudioAdapter(support);
+      await hlsAdapter.init();
+      // The outer beforeEach already created audios[0] for its own adapter; this
+      // adapter's element is whichever init() just appended.
+      hlsFake = audios[audios.length - 1]!;
+    });
+
+    it("drives an HLS ticket through hls.js instead of the src attribute", async () => {
+      const url = "https://playback.soundcloud.cloud/x/playlist.m3u8";
+      await hlsAdapter.play(hlsTicket(url));
+
+      const engine = support.engines[0]!;
+      expect(engine.loadedSource).toBe(url);
+      expect(engine.attachedTo).toBe(hlsFake);
+      // The element is fed by MSE, so nothing is set on src directly.
+      expect(hlsFake.src).toBe("");
+      expect(hlsFake.playCalls).toBe(1);
+    });
+
+    it("plays HLS natively when the element supports it, skipping hls.js", async () => {
+      const url = "https://playback.soundcloud.cloud/x/playlist.m3u8";
+      // Simulate Safari/iOS: the element reports it can play HLS itself.
+      hlsFake.canPlayType = (t: string) =>
+        t === "application/vnd.apple.mpegurl" ? "maybe" : "";
+
+      await hlsAdapter.play(hlsTicket(url));
+
+      expect(support.engines).toHaveLength(0);
+      expect(hlsFake.src).toBe(url);
+    });
+
+    it("keeps progressive tickets off hls.js", async () => {
+      await hlsAdapter.play(ticket("https://stream.example/audio.webm"));
+
+      expect(support.engines).toHaveLength(0);
+      expect(hlsFake.src).toBe("https://stream.example/audio.webm");
+    });
+
+    it("destroys the engine on stop so the segment fetch loop ends", async () => {
+      await hlsAdapter.play(hlsTicket("https://x/playlist.m3u8"));
+      const engine = support.engines[0]!;
+
+      await hlsAdapter.stop();
+
+      expect(engine.destroyed).toBe(true);
+    });
+
+    it("tears down the previous engine when the next track loads on the same element", async () => {
+      await hlsAdapter.play(hlsTicket("https://x/one.m3u8"));
+      const first = support.engines[0]!;
+
+      await hlsAdapter.play(hlsTicket("https://x/two.m3u8"));
+
+      expect(first.destroyed).toBe(true);
+      expect(support.engines[1]!.loadedSource).toBe("https://x/two.m3u8");
+    });
+
+    it("promotes a pre-loaded HLS engine on play rather than recreating it", async () => {
+      const url = "https://x/next.m3u8";
+      await hlsAdapter.prepare(hlsTicket(url));
+      expect(support.engines).toHaveLength(1);
+      const prepared = support.engines[0]!;
+
+      await hlsAdapter.play(hlsTicket(url));
+
+      // No second engine created: the warmed-up one is reused.
+      expect(support.engines).toHaveLength(1);
+      expect(prepared.destroyed).toBe(false);
+    });
+
+    it("falls back to src when MSE is unsupported and there is no native HLS", async () => {
+      const noSupport = fakeHlsSupport(false);
+      const adapter2 = new DirectAudioAdapter(noSupport);
+      await adapter2.init();
+      const url = "https://x/playlist.m3u8";
+
+      await adapter2.play(hlsTicket(url));
+
+      // Nothing can play it, but we still try src rather than throwing — the play()
+      // error path then reports the codec failure to the user.
+      expect(noSupport.engines).toHaveLength(0);
+      const lastAudio = audios[audios.length - 1]!;
+      expect(lastAudio.src).toBe(url);
     });
   });
 });

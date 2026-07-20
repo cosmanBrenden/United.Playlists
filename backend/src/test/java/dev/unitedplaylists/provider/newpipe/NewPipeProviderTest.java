@@ -75,13 +75,16 @@ class NewPipeProviderTest {
     @DisplayName("playback resolves a fresh stream URL as a DIRECT_AUDIO ticket")
     void playbackReturnsADirectAudioTicket() {
         TrackRef ref = new TrackRef(ProviderId.YOUTUBE, "dQw4w9WgXcQ");
-        when(extraction.resolveAudioStreamUrl(any(), eq(ProviderId.YOUTUBE), eq(ref)))
-                .thenReturn("https://stream.example/audio.webm");
+        when(extraction.resolveAudioStream(any(), eq(ProviderId.YOUTUBE), eq(ref)))
+                .thenReturn(new NewPipeExtractionService.ResolvedStream(
+                        "https://stream.example/audio.webm",
+                        NewPipeExtractionService.ResolvedStream.PROGRESSIVE));
 
         PlaybackTicket ticket = youtube().resolvePlayback(anon, ref);
 
         assertThat(ticket.method()).isEqualTo(PlaybackMethod.DIRECT_AUDIO);
         assertThat(ticket.params()).containsEntry("streamUrl", "https://stream.example/audio.webm");
+        assertThat(ticket.params()).containsEntry("protocol", "progressive");
         assertThat(ticket.ref()).isEqualTo(ref);
     }
 

@@ -1,13 +1,53 @@
+import Hls from "hls.js";
 import type { PlaybackMethod, PlaybackTicket } from "../api/types";
 import type { PlayerAdapter } from "./types";
+
+/**
+ * The slice of hls.js this adapter uses, isolated behind an interface so the adapter
+ * can be unit-tested without a real MediaSource (which jsdom lacks) and so the browser
+ * dependency has exactly one seam.
+ */
+export interface HlsEngine {
+  loadSource(url: string): void;
+  attachMedia(media: HTMLMediaElement): void;
+  destroy(): void;
+}
+
+/** Capability + factory for HLS playback, injectable for tests. */
+export interface HlsSupport {
+  /** Whether Media Source Extensions can drive hls.js in this runtime. */
+  isSupported(): boolean;
+  create(): HlsEngine;
+}
+
+/** The real hls.js, used in the browser/Electron. */
+const defaultHlsSupport: HlsSupport = {
+  isSupported: () => Hls.isSupported(),
+  create: () => new Hls({ enableWorker: true }),
+};
+
+/** One audio element and the HLS engine (if any) feeding it. */
+interface Source {
+  url: string;
+  audio: HTMLAudioElement;
+  hls: HlsEngine | null;
+}
 
 /**
  * Plays a direct audio stream URL through a plain HTML5 {@code <audio>} element.
  *
  * <p>Used by the scraper-backed services (YouTube and SoundCloud via NewPipe), where
  * the backend resolves a real stream URL rather than delegating to a vendor SDK. That
- * makes this the simplest adapter by far — no SDK to load, no DRM, no hidden iframe —
- * which is one of the quieter wins of the scraper approach.
+ * makes this the simplest adapter by far — no SDK to load, no DRM, no hidden iframe.
+ *
+ * <p>Two delivery protocols arrive here, distinguished by the ticket's {@code protocol}
+ * param. A <em>progressive</em> URL (YouTube, most audio) plays straight through the
+ * element. An <em>HLS</em> playlist (SoundCloud serves only these for most tracks) does
+ * not: Chromium — and therefore Electron — ships no native HLS, so a plain element
+ * silently fails with "audio format could not be played". For HLS this adapter drives
+ * the element through {@link https://github.com/video-dev/hls.js hls.js} via Media
+ * Source Extensions, and falls back to the element's own native HLS where it exists
+ * (Safari/iOS), which is what makes SoundCloud play at all.
  *
  * <p>The stream URL is time-limited and tied to the requesting IP, so the backend
  * resolves it fresh for every {@code play} rather than caching a ticket.
@@ -15,19 +55,24 @@ import type { PlayerAdapter } from "./types";
 export class DirectAudioAdapter implements PlayerAdapter {
   readonly method: PlaybackMethod = "DIRECT_AUDIO";
 
-  #audio: HTMLAudioElement | null = null;
+  #source: Source | null = null;
   #onEndedCallback?: () => void;
   #volume = 1;
+  readonly #hlsSupport: HlsSupport;
 
   /**
-   * A second element holding the next track, pre-loaded while the current one plays.
-   * When that track's `play` arrives we promote this element instead of starting a
-   * fresh download, so the gap between tracks is as small as the browser allows.
+   * The next track, pre-loaded while the current one plays. Holding a second element
+   * (and, for HLS, a second engine) warmed up means the gap between tracks is as small
+   * as the browser allows.
    */
-  #prepared: { url: string; audio: HTMLAudioElement } | null = null;
+  #prepared: Source | null = null;
+
+  constructor(hlsSupport: HlsSupport = defaultHlsSupport) {
+    this.#hlsSupport = hlsSupport;
+  }
 
   async init(): Promise<void> {
-    this.#audio = this.#makeAudio();
+    this.#source = { url: "", audio: this.#makeAudio(), hls: null };
   }
 
   async prepare(ticket: PlaybackTicket): Promise<void> {
@@ -38,10 +83,7 @@ export class DirectAudioAdapter implements PlayerAdapter {
     // Drop any earlier pre-load: only the immediate next track is worth holding a
     // connection open for.
     this.#releasePrepared();
-    const audio = this.#makeAudio();
-    audio.src = streamUrl;
-    audio.load();
-    this.#prepared = { url: streamUrl, audio };
+    this.#prepared = this.#load(this.#makeAudio(), streamUrl, ticket);
   }
 
   async play(ticket: PlaybackTicket): Promise<void> {
@@ -50,25 +92,25 @@ export class DirectAudioAdapter implements PlayerAdapter {
       throw new Error("Playback ticket carried no stream URL");
     }
 
-    // If this is the track we pre-loaded, swap the warmed-up element in rather than
+    // If this is the track we pre-loaded, swap the warmed-up source in rather than
     // reloading the stream from scratch.
     if (this.#prepared?.url === streamUrl) {
-      const promoted = this.#prepared.audio;
+      const promoted = this.#prepared;
       this.#prepared = null;
-      this.#teardown(this.#audio);
-      this.#audio = promoted;
+      this.#teardown(this.#source);
+      this.#source = promoted;
     } else {
-      if (!this.#audio) {
+      if (!this.#source) {
         throw new Error("Audio element is not ready");
       }
-      this.#audio.src = streamUrl;
-      this.#audio.load();
+      // Reuse the live element, but discard any HLS engine bound to the previous track
+      // before attaching the new source to it.
+      const audio = this.#source.audio;
+      this.#detachEngine(this.#source);
+      this.#source = this.#load(audio, streamUrl, ticket);
     }
 
-    const audio = this.#audio;
-    if (!audio) {
-      throw new Error("Audio element is not ready");
-    }
+    const audio = this.#source.audio;
     audio.volume = this.#volume;
     try {
       await audio.play();
@@ -91,42 +133,46 @@ export class DirectAudioAdapter implements PlayerAdapter {
   }
 
   async resume(): Promise<void> {
-    await this.#audio?.play();
+    await this.#source?.audio.play();
   }
 
   async pause(): Promise<void> {
-    this.#audio?.pause();
+    this.#source?.audio.pause();
   }
 
   async stop(): Promise<void> {
-    if (this.#audio) {
-      this.#audio.pause();
+    if (this.#source) {
+      const audio = this.#source.audio;
+      audio.pause();
       // Releasing the source stops the download and frees the connection, which
-      // matters when swapping between services mid-playlist.
-      this.#audio.removeAttribute("src");
-      this.#audio.load();
+      // matters when swapping between services mid-playlist. For HLS that means tearing
+      // down the engine, which owns the fetch loop the <audio> element does not.
+      this.#detachEngine(this.#source);
+      audio.removeAttribute("src");
+      audio.load();
+      this.#source.url = "";
     }
   }
 
   async seek(positionMs: number): Promise<void> {
-    if (this.#audio) {
-      this.#audio.currentTime = positionMs / 1000;
+    if (this.#source) {
+      this.#source.audio.currentTime = positionMs / 1000;
     }
   }
 
   async setVolume(volume: number): Promise<void> {
     this.#volume = Math.min(1, Math.max(0, volume));
-    if (this.#audio) {
-      this.#audio.volume = this.#volume;
+    if (this.#source) {
+      this.#source.audio.volume = this.#volume;
     }
   }
 
   async getPositionMs(): Promise<number | null> {
-    return this.#audio ? Math.round(this.#audio.currentTime * 1000) : null;
+    return this.#source ? Math.round(this.#source.audio.currentTime * 1000) : null;
   }
 
   async getBufferedMs(): Promise<number | null> {
-    const audio = this.#audio;
+    const audio = this.#source?.audio;
     if (!audio) {
       return null;
     }
@@ -149,7 +195,7 @@ export class DirectAudioAdapter implements PlayerAdapter {
   }
 
   async getDurationMs(): Promise<number | null> {
-    const duration = this.#audio?.duration;
+    const duration = this.#source?.audio.duration;
     return duration !== undefined && Number.isFinite(duration) && duration > 0
       ? Math.round(duration * 1000)
       : null;
@@ -161,8 +207,42 @@ export class DirectAudioAdapter implements PlayerAdapter {
 
   async dispose(): Promise<void> {
     this.#releasePrepared();
-    this.#teardown(this.#audio);
-    this.#audio = null;
+    this.#teardown(this.#source);
+    this.#source = null;
+  }
+
+  /**
+   * Points an element at a stream. Progressive URLs (and HLS where the element plays it
+   * natively, i.e. Safari/iOS) go straight on {@code src}; otherwise an hls.js engine is
+   * attached to drive the element via MSE.
+   */
+  #load(audio: HTMLAudioElement, url: string, ticket: PlaybackTicket): Source {
+    if (this.#needsHlsEngine(audio, url, ticket)) {
+      const hls = this.#hlsSupport.create();
+      hls.loadSource(url);
+      hls.attachMedia(audio);
+      return { url, audio, hls };
+    }
+    audio.src = url;
+    audio.load();
+    return { url, audio, hls: null };
+  }
+
+  /**
+   * True when the stream is HLS and the element cannot play it itself, so hls.js has to.
+   * The protocol is authoritative (the backend flags SoundCloud as "hls"); the {@code
+   * .m3u8} check is a defensive fallback for any ticket that predates the flag.
+   */
+  #needsHlsEngine(audio: HTMLAudioElement, url: string, ticket: PlaybackTicket): boolean {
+    const isHls = ticket.params.protocol === "hls" || /\.m3u8(\?|$)/i.test(url);
+    if (!isHls) {
+      return false;
+    }
+    // Safari/iOS play HLS natively; there, hls.js is neither needed nor wanted.
+    const nativeHls =
+      typeof audio.canPlayType === "function" &&
+      audio.canPlayType("application/vnd.apple.mpegurl") !== "";
+    return !nativeHls && this.#hlsSupport.isSupported();
   }
 
   /** Creates an element wired to fire the shared end-of-track callback. */
@@ -178,16 +258,25 @@ export class DirectAudioAdapter implements PlayerAdapter {
 
   #releasePrepared(): void {
     if (this.#prepared) {
-      this.#teardown(this.#prepared.audio);
+      this.#teardown(this.#prepared);
       this.#prepared = null;
     }
   }
 
-  #teardown(audio: HTMLAudioElement | null): void {
-    if (audio) {
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
+  /** Destroys the HLS engine on a source, if any, leaving the element reusable. */
+  #detachEngine(source: Source): void {
+    if (source.hls) {
+      source.hls.destroy();
+      source.hls = null;
+    }
+  }
+
+  #teardown(source: Source | null): void {
+    if (source) {
+      this.#detachEngine(source);
+      source.audio.pause();
+      source.audio.removeAttribute("src");
+      source.audio.load();
     }
   }
 }

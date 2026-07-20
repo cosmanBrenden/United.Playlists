@@ -47,6 +47,7 @@ A track that lives on one service can be swapped for the same song on another. O
 **To build or run from source**, you additionally need:
 
 - **Maven 3.9+** and **Node 20+**
+- **Python 3** — only for building a *distributable* installer with working Spotify playback. It runs the Castlabs EVS tool that VMP-signs the build for Widevine (see [Signing for Spotify playback](#signing-for-spotify-playback-widevine-vmp) and `npm run setup:evs`). Running from source, and building unsigned installers, do not need it.
 
 Spotify is the only service that needs credentials, and only if you want to use it:
 
@@ -62,9 +63,11 @@ Spotify is the only service that needs credentials, and only if you want to use 
 
 The builds are VMP-signed for development, so nothing extra is needed to run from source. Distributing a packaged app needs production signing through [castLabs' EVS](https://github.com/castlabs/electron-releases/wiki/EVS). On Linux, Widevine works but persistent licenses do not — irrelevant here, since nothing is downloaded for offline use.
 
-**If `npm install` fails to fetch Electron** with `Host key verification failed` or `Could not read from remote repository`: npm rewrites GitHub dependencies to `git+ssh://` and needs SSH keys. Point git at HTTPS instead:
+**If `npm install` fails to fetch Electron** with `Host key verification failed` or `Could not read from remote repository`: npm rewrites the GitHub dependency to `git+ssh://git@github.com/castlabs/electron-releases.git` in the lockfile and needs SSH keys. Point git at HTTPS instead. The URL npm hands git is the `ssh://` form, so the rewrite must match *that* — a scp-style `git@github.com:` rule does not:
 
 ```bash
+git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+# (harmless to add the scp-style form too, for any tool that uses it)
 git config --global url."https://github.com/".insteadOf "git@github.com:"
 ```
 
@@ -72,6 +75,12 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 ```bash
 npm install-scripts approve electron
+```
+
+If `dist/` is *still* empty after that, trigger the download directly. Running the Electron package's entry point resolves the binary path and downloads+extracts it if missing:
+
+```bash
+node node_modules/electron/index.js
 ```
 
 ## Running it
@@ -108,7 +117,25 @@ npm run dist:mac      # dmg + zip
 
 Each command builds the renderer and the backend jar first, then packages them with the Electron shell. The installed app bundles everything except Java: it expects **Java 21+** on the user's PATH (see [Requirements](#requirements)). Build each platform's installer on that platform (or in CI) — a macOS `.dmg` in particular cannot be produced on Linux or Windows.
 
-Full details, including the Widevine VMP signing needed for Spotify playback in a distributed build, are in [PACKAGING.md](PACKAGING.md).
+### Signing for Spotify playback (Widevine VMP)
+
+Spotify playback in a *packaged* build needs the app to be VMP-signed with a Castlabs EVS production key (a dev run from source is signed automatically; a distributed build is not). The `dist` scripts do this for you — they refresh the EVS session and `packaging/afterPack.cjs` signs the app during packaging — once you have logged in **once** on the machine:
+
+```bash
+npm run setup:evs          # installs the Castlabs EVS tool and logs you in
+npm run dist               # build; the app is VMP-signed automatically
+```
+
+`setup:evs` needs **Python 3** (see [Requirements](#requirements)). It creates the account for you too:
+
+```bash
+npm run setup:evs -- --signup                 # create a new EVS account
+npm run setup:evs -- --signup --confirm 123456 # confirm it with the emailed code
+```
+
+Credentials can be supplied non-interactively via `UP_EVS_ACCOUNT` / `UP_EVS_PASSWORD` (and `UP_EVS_EMAIL` / `UP_EVS_FIRST_NAME` / `UP_EVS_LAST_NAME` for signup), which is what CI would use. If EVS is not set up, `npm run dist` still produces a working installer — YouTube and SoundCloud play; only Spotify playback is disabled in that build. Set `UP_VMP_REQUIRED=1` to make missing signing fail the build instead.
+
+Full details are in [PACKAGING.md](PACKAGING.md).
 
 ## Tests
 

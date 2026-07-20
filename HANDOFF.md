@@ -42,8 +42,11 @@ First-time setup:
   npm install                    # installs core-ui + desktop deps
   # If Electron's binary is missing after install (empty node_modules/electron/dist):
   npm install-scripts approve electron     # its postinstall DOWNLOADS the ~220MB binary
-  # If npm can't fetch Electron over git+ssh (Host key verification failed):
-  git config --global url."https://github.com/".insteadOf "git@github.com:"
+  # ...and if dist/ is STILL empty, force the download directly:
+  node node_modules/electron/index.js      # resolves the path, downloads+extracts if missing
+  # If npm can't fetch Electron over git+ssh (Host key verification failed): the lockfile
+  # URL is ssh://git@github.com/... so the insteadOf must match that form (not scp-style):
+  git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
 
 Build the backend jar (Electron spawns this):
   npm run backend:build          # == cd backend && mvn -B package -DskipTests

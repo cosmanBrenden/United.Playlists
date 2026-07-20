@@ -61,12 +61,16 @@ class NewPipeLiveProbeTest {
             return;
         }
         // Rick Astley — Never Gonna Give You Up. A stable, always-available video.
-        String url = extraction.resolveAudioStreamUrl(
+        NewPipeExtractionService.ResolvedStream stream = extraction.resolveAudioStream(
                 ServiceList.YouTube, ProviderId.YOUTUBE,
                 new TrackRef(ProviderId.YOUTUBE, "dQw4w9WgXcQ"));
 
-        assertThat(url).startsWith("https://");
-        System.out.println("YouTube audio URL: " + url.substring(0, Math.min(80, url.length())) + "…");
+        assertThat(stream.url()).startsWith("https://");
+        // YouTube serves progressive audio, so the client never needs the HLS path.
+        assertThat(stream.protocol())
+                .isEqualTo(NewPipeExtractionService.ResolvedStream.PROGRESSIVE);
+        System.out.println("YouTube audio (" + stream.protocol() + "): "
+                + stream.url().substring(0, Math.min(80, stream.url().length())) + "…");
     }
 
     @Test
@@ -82,5 +86,30 @@ class NewPipeLiveProbeTest {
         assertThat(tracks).allSatisfy(track ->
                 assertThat(track.provider()).isEqualTo(ProviderId.SOUNDCLOUD));
         System.out.println("SoundCloud search[0]: " + tracks.get(0).title());
+    }
+
+    @Test
+    @DisplayName("SoundCloud resolves a playable audio stream (HLS)")
+    void soundcloudPlayback() {
+        if (!live()) {
+            return;
+        }
+        // First search result becomes the track we try to resolve, since SoundCloud ids
+        // are not stable strings we can hard-code the way a YouTube video id is.
+        List<Track> tracks = extraction.search(
+                ServiceList.SoundCloud, ProviderId.SOUNDCLOUD, "flume never be like you", 5);
+        assertThat(tracks).isNotEmpty();
+
+        NewPipeExtractionService.ResolvedStream stream = extraction.resolveAudioStream(
+                ServiceList.SoundCloud, ProviderId.SOUNDCLOUD, tracks.get(0).ref());
+
+        // The regression this guards: SoundCloud serves only HLS, and the old code picked
+        // the highest-bitrate stream regardless of protocol and handed the HLS URL to a
+        // plain <audio> element, which cannot play it. It must resolve, and be flagged so
+        // the client takes the HLS path.
+        assertThat(stream.url()).startsWith("https://");
+        assertThat(stream.protocol()).isEqualTo(NewPipeExtractionService.ResolvedStream.HLS);
+        System.out.println("SoundCloud audio (" + stream.protocol() + "): "
+                + stream.url().substring(0, Math.min(80, stream.url().length())) + "…");
     }
 }
