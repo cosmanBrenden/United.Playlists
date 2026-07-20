@@ -2,7 +2,9 @@ UNITEDPLAYLISTS — PROJECT HANDOFF
 =================================
 For a fresh AI/dev picking up this project cold. Read this before touching code.
 Last updated after: Spotify playback working, YouTube+SoundCloud on NewPipe scraper,
-extractor auto-update wired, safeStorage key-rotation bug fixed.
+extractor auto-update wired, safeStorage key-rotation bug fixed, SoundCloud HLS
+playback fixed (hls.js), EVS signing automated into `npm run dist`, packaged menu bar
+removed, and the sidebar reworked (fixed header + scrollable list).
 
 
 0. WHAT THIS IS
@@ -36,6 +38,9 @@ Prereqs (verified working versions):
     you also need the password-store override (already coded, see hiccup #6).
   - Spotify Premium + a Spotify app client ID (see section 3 for why Premium).
   - Castlabs Electron (installed via git URL; see hiccup #2).
+  - Python 3 — ONLY to build a distributable installer with working Spotify playback
+    (it runs the Castlabs EVS VMP signer). Not needed to run from source. See
+    `npm run setup:evs` and hiccup #19.
 
 First-time setup:
   cd /home/monke/Documents/United.Playlists
@@ -63,8 +68,8 @@ Run the app in dev (TWO terminals):
   the Vite server (terminal 1) running first, or the window is blank in dev.
 
 Tests:
-  npm run backend:test           # == cd backend && mvn -B verify  (~280 tests)
-  npm test                       # core-ui vitest (~144 tests)
+  npm run backend:test           # == cd backend && mvn -B verify  (~285 tests)
+  npm test                       # core-ui vitest (~151 tests)
   (cd packages/core-ui && npx tsc --noEmit)               # typecheck
   (cd packages/desktop && node --test src/*.test.js)      # 16 tests (oauth-callback,
                                                           #   backend, java-runtime)
@@ -211,6 +216,49 @@ Handy env vars the backend reads (Electron sets most):
     the renderer — build a component, or (for a truly native dialog) go through the
     Electron main process via the preload bridge.
 
+#18 SOUNDCLOUD SERVES ONLY HLS; A PLAIN <audio> CANNOT PLAY IT. YouTube played but
+    SoundCloud was silent ("This track's audio format could not be played"). Cause:
+    NewPipe returns YouTube audio as PROGRESSIVE_HTTP (a plain <audio> plays it) but
+    SoundCloud as HLS (.m3u8) only, and Chromium — hence Electron — has NO native HLS.
+    resolveAudioStreamUrl picked the highest-bitrate stream regardless of protocol and
+    handed the HLS URL to <audio>, which fails silently. Confirmed with a live probe of
+    getDeliveryMethod(). Fix, two parts:
+      - Backend (NewPipeExtractionService.resolveAudioStream): PREFER a progressive
+        stream, fall back to HLS, and return a ResolvedStream(url, protocol). The
+        DIRECT_AUDIO ticket now carries a "protocol" param ("progressive" | "hls").
+      - Renderer (DirectAudioAdapter): for "hls" it drives the <audio> element through
+        hls.js via MSE, with a native-HLS fallback for Safari/iOS; progressive still
+        goes straight to src. hls.js is injected behind an HlsSupport interface so the
+        adapter is unit-testable without a real MediaSource (jsdom has none).
+      - CSP (core-ui/index.html): connect-src widened to SoundCloud's CDNs
+        (*.sndcdn.com, *.soundcloud.cloud, *.soundcloud.com) so hls.js can fetch the
+        playlist + segments. Scoped, not blanket https:, because the page holds Spotify
+        tokens. media-src already allowed https:/blob: for the MediaSource output.
+    New runtime dep: hls.js (Apache-2.0), bundled into core-ui/dist by Vite (~200 KB;
+    it's why the bundle crossed Vite's 500 KB chunk warning). Live check:
+    NewPipeLiveProbeTest asserts YouTube=progressive, SoundCloud=hls.
+
+#19 DISTRIBUTED SPOTIFY PLAYBACK NEEDS EVS SIGNING, WHICH USED TO BE ALL-MANUAL. VMP
+    signing (hiccup #2, packaging/afterPack.cjs) only works if the machine has the
+    castlabs-evs Python tool AND a logged-in EVS account. That was a pile of undocumented
+    manual steps on every new machine. Now scripts/setup-evs.mjs does it:
+      - `npm run setup:evs` installs castlabs-evs and, with no flag, ASKS whether to log
+        in (reauth) or create an account (signup) — it does NOT assume an account exists.
+        --login / --signup force a mode; --confirm <code> finishes a signup in CI.
+        Credentials can come from UP_EVS_ACCOUNT/PASSWORD (+ EMAIL/FIRST_NAME/LAST_NAME).
+      - `--ensure` is a best-effort refresh wired into every dist script as
+        dist:sign:ensure (runs BEFORE electron-builder), so `npm run dist` refreshes the
+        EVS session and afterPack signs automatically. It NEVER fails the build — no EVS
+        just builds unsigned (YT/SC play, Spotify doesn't). UP_VMP_REQUIRED=1 makes
+        missing signing fatal. Needs Python 3 (see section 1).
+
+#20 THE ELECTRON MENU BAR IS REMOVED IN PACKAGED BUILDS ONLY. main.js createWindow now
+    sets autoHideMenuBar and calls mainWindow.removeMenu() when !isDev, so the default
+    File/Edit/View bar is gone from the shipped app (the UI has its own nav). removeMenu
+    is window-scoped: it clears the in-window bar on Windows/Linux and leaves macOS's
+    global menu (Quit etc.) intact. Kept in dev, where the View menu and DevTools
+    shortcuts are handy. If you need it back in a build, that's the two lines to flip.
+
 
 3. KEY DESIGN DECISIONS (the "why", so you don't undo them)
 -----------------------------------------------------------
@@ -252,6 +300,14 @@ Handy env vars the backend reads (Electron sets most):
 - PLAYER FACADE: one Player over multiple SDK adapters (SpotifyAdapter = Web Playback
   SDK; DirectAudioAdapter = <audio> for YT/SC). Facade swaps adapters mid-playlist so
   a mixed playlist "just works". Adding a service = one adapter.
+
+  DirectAudioAdapter plays two stream protocols, told apart by the ticket's "protocol"
+  param (see hiccup #18): a "progressive" URL goes straight on <audio>.src; an "hls"
+  URL is driven through hls.js (Media Source Extensions), with a native-HLS fallback
+  for Safari/iOS. hls.js sits behind the HlsSupport interface (injected in the
+  constructor) so the adapter unit-tests without a real MediaSource. The pre-buffer
+  path (prepare/promote) carries the HLS engine along with its element, and teardown
+  destroys the engine so the segment fetch loop stops.
 
   The facade owns everything the UI treats as "the player": transport, the QUEUE
   (setQueue + playQueueItem + moveInQueue/removeFromQueue/addToQueue, all keeping the
@@ -345,10 +401,13 @@ Not done / next:
      jar ships as resources/backend.jar; the renderer is bundled into the asar. The app
      requires Java 21 on PATH (checked at startup, friendly dialog if missing/old) —
      no JRE is bundled, though main.js still prefers resources/jre/bin/java if one is
-     added later. STILL OPEN: production Widevine VMP signing (packaging/afterPack.cjs
-     runs it best-effort — needs a castLabs EVS account for Spotify playback in
-     distributed builds) and OS code-signing/notarization. Note this build
-     scrapes YT/SC, which blocks app-store distribution regardless.
+     added later. Packaged builds also drop the Electron menu bar (hiccup #20).
+     WIDEVINE VMP SIGNING is now automated (hiccup #19): `npm run setup:evs` logs into
+     or creates a castLabs EVS account, and every dist script refreshes the session
+     (dist:sign:ensure) so afterPack signs automatically — best-effort, so a build with
+     no EVS account still works (unsigned = no Spotify playback). STILL OPEN: OS
+     code-signing/notarization (unsigned installers trip SmartScreen/Gatekeeper). Note
+     this build scrapes YT/SC, which blocks app-store distribution regardless.
      APP ICON: done — packaging/icon.png (1024², generated from packaging/icon.svg,
      the vinyl-wreath emblem). electron-builder auto-derives .icns/.ico/Linux sizes
      from it since buildResources=packaging; the running window icon is
@@ -401,9 +460,17 @@ Not done / next:
 Frontend (packages/core-ui/src/):
   api/           client.ts (typed backend client), types.ts
   player/        Player.ts (facade: transport + queue + shuffle + progress + prefetch),
-                 SpotifyAdapter.ts, DirectAudioAdapter.ts (2nd <audio> for pre-buffer),
+                 SpotifyAdapter.ts, DirectAudioAdapter.ts (2nd <audio> for pre-buffer;
+                 progressive via src, HLS via hls.js behind the HlsSupport seam — #18),
                  types.ts (PlayerState carries queue/index/shuffle/buffered; the
                  PlayerAdapter contract incl. getBufferedMs/getDurationMs/prepare)
+  index.html     the renderer's strict CSP lives here (connect-src includes SoundCloud's
+                 HLS CDNs for hls.js — see hiccup #18)
+  styles.css     all styling. Sidebar is a fixed-height flex column: brand/tabs/New-
+                 playlist button pinned, only .playlist-list scrolls (min-height:0),
+                 with a full-bleed divider marking the split. Scrollbars themed globally
+                 via ::-webkit-scrollbar. Long playlist names ellipsize (.playlist-list
+                 .name) so the sidebar never scrolls horizontally.
   views/         SearchView, PlaylistView (Play all + Shuffle + select/migrate),
                  ConnectionsView, ProviderSetupForm
   components/    PlayerBar (transport + ProgressBar + shuffle/queue toggles),
@@ -418,7 +485,7 @@ Frontend (packages/core-ui/src/):
 Desktop (packages/desktop/src/):
   main.js        Electron main: password-store, Widevine, token.key, verifyJava,
                  spawn backend (with loader.path for extractor updates), OAuth
-                 loopback, IPC
+                 loopback, IPC; removes the window menu bar in packaged builds (#20)
   backend.js     BackendProcess: spawns java, reads chosen port from stdout
   java-runtime.js  pure Java-version helpers (parse/compare) used by main.js's
                  startup check; unit-tested without Electron
@@ -427,7 +494,10 @@ Desktop (packages/desktop/src/):
 
 Packaging (root):
   packaging/afterPack.cjs   electron-builder hook: best-effort Castlabs VMP signing
+  scripts/setup-evs.mjs     EVS install + login/signup, and the --ensure step that
+                            every dist script runs before packaging (hiccup #19)
   package.json "build"      electron-builder config (targets, backend.jar resource)
+  package.json "scripts"    dist* scripts run dist:sign:ensure before electron-builder
 
 
 6. GOTCHAS FOR THE NEXT SESSION
@@ -435,6 +505,17 @@ Packaging (root):
 - The backend jar MUST be rebuilt (npm run backend:build) after backend changes;
   Electron runs the built jar, not live classes.
 - Two version constants for NewPipe must stay in sync (pom + application.yml).
+- Adding a renderer runtime dep (like hls.js) means `npm install` on every machine
+  before building — `npm run dist` builds but does NOT install, so a fresh git pull
+  then `npm run dist` fails with "Rollup failed to resolve import". Run npm install
+  after pulling new deps.
+- hls.js needs its CDN hosts in connect-src (core-ui/index.html). If SoundCloud starts
+  serving segments from a new host, playback breaks with a CSP error in the console;
+  add the host (wildcard) there. Don't widen connect-src to blanket https: — the page
+  holds Spotify tokens.
+- EVS signing is best-effort: `npm run dist` prints a warning and builds unsigned if
+  no EVS session. If you WANT it to fail loudly when signing can't happen, build with
+  UP_VMP_REQUIRED=1.
 - app.setName vs userData path currently mismatch ("United.Playlists" vs
   "UnitedPlaylists") — harmless (path is explicit) but tidy up if it bugs you.
 - Scraping breaks without warning when YouTube/SoundCloud change; the auto-updater is

@@ -178,6 +178,24 @@ The provider abstraction is the point of the design. To add one:
 
 Nothing else changes. `ProviderRegistryTest` demonstrates this with a service invented inside the test.
 
+## Where your data is stored
+
+Everything the app keeps lives in one per-user directory, the OS-native application-data location:
+
+| OS      | Location                                                                        |
+| ------- | ------------------------------------------------------------------------------- |
+| Windows | `%APPDATA%\UnitedPlaylists` (`C:\Users\<you>\AppData\Roaming\UnitedPlaylists`)   |
+| macOS   | `~/Library/Application Support/UnitedPlaylists`                                  |
+| Linux   | `~/.config/UnitedPlaylists` (or `$XDG_CONFIG_HOME/UnitedPlaylists`)             |
+
+That directory holds:
+
+- the **H2 database** — your playlists and your OAuth tokens (the tokens encrypted with AES-256-GCM);
+- **`token.key`** — nothing sensitive on its own; the *decryption* key for it lives in the OS keychain (see below), never on disk;
+- **`newpipe/`** — the cached NewPipeExtractor update used for YouTube/SoundCloud scraping.
+
+Nothing is written next to the installed program, so the app runs from a read-only install and uninstalls cleanly by removing that folder. The **token-encryption key** itself is kept in the OS keychain — Keychain on macOS, Credential Manager (DPAPI) on Windows, the Secret Service on Linux — not in the folder above. When running from source without the Electron shell, the backend falls back to `~/.unitedplaylists` for the data directory (overridable with `UP_DATA_DIR`).
+
 ## Security notes
 
 - OAuth tokens are encrypted at rest with AES-256-GCM. The key lives in the OS keychain via Electron's `safeStorage`, never beside the database.
