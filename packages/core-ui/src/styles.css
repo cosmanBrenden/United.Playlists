@@ -75,11 +75,11 @@ body {
   background: var(--bg-raised);
   border-right: 1px solid var(--border);
   padding: 1rem;
-  overflow-y: auto;
-  /* The sidebar scrolls vertically only. Without this, overflow-y:auto promotes
-     overflow-x to auto too, so a single long playlist name would add a horizontal
-     scrollbar — long names ellipsize (see .playlist-list .name) instead. */
-  overflow-x: hidden;
+  /* A fixed-height column: brand, tabs and the New-playlist button stay put; only the
+     playlist list below scrolls (see .playlist-list). The bar itself never scrolls. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .content {
@@ -171,8 +171,19 @@ body {
 
 .tabs {
   display: flex;
-  gap: 0.25rem;
+  gap: 0.3rem;
   margin-bottom: 1rem;
+}
+
+/* The three tabs share the row equally, so they fill the sidebar edge-to-edge and
+   stay symmetric instead of overflowing off the right. flex-basis:0 sizes them by
+   the flex ratio (equal), not by label length; min-width:0 lets them shrink. */
+.tabs button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.4rem 0.25rem;
+  text-align: center;
+  font-size: 0.8rem;
 }
 
 button {
@@ -216,6 +227,24 @@ button.danger:hover:not(:disabled) {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* Everything under the New-playlist button scrolls here, and only here. flex:1 takes
+   the remaining column height; min-height:0 lets it shrink below its content so the
+   overflow actually scrolls rather than stretching the sidebar. Horizontal is clipped
+   so long names ellipsize (see .playlist-list .name) instead of adding a scrollbar. */
+.playlist-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* A full-bleed rule marks where the fixed header ends and the scroll region begins.
+     The negative side margins pull it to the sidebar edges; the padding restores the
+     items' inset so they still line up with the New-playlist button above. Items clip
+     at this line as they scroll (overflow cuts at the padding box, just inside it). */
+  margin: 0 -1rem;
+  padding: 0.75rem 1rem 0;
+  border-top: 1px solid var(--border);
 }
 
 .playlist-list button {
