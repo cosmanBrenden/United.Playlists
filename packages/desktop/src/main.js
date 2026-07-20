@@ -300,6 +300,11 @@ function createWindow() {
     // from the packaged bundle/exe instead, but this drives Linux and dev runs.
     icon: join(__dirname, "assets", "icon.png"),
     show: false,
+    // Hide the menu bar in packaged builds — the app has its own in-window nav, so the
+    // default File/Edit/View bar is just chrome. Kept in dev, where its View menu and
+    // DevTools shortcuts are useful. (removeMenu below makes this permanent on
+    // Windows/Linux; macOS keeps its global menu, so Quit etc. still work.)
+    autoHideMenuBar: !isDev,
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       // The renderer runs Spotify's and YouTube's SDK code. Context isolation and
@@ -311,6 +316,12 @@ function createWindow() {
       webSecurity: true,
     },
   });
+
+  // Drop the window menu bar entirely in packaged builds (Windows/Linux). Left in dev
+  // so the toolbar — and its DevTools entries — stay available while developing.
+  if (!isDev) {
+    mainWindow.removeMenu();
+  }
 
   mainWindow.once("ready-to-show", () => {
     closeSplash();

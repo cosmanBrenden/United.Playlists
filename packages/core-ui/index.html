@@ -7,7 +7,13 @@
       The page runs Spotify's SDK next to the user's tokens, so it is locked down to
       what that needs plus the audio streaming below:
         script-src  - only the Spotify SDK
-        connect-src - the local backend and Spotify's API
+        connect-src - the local backend, Spotify's API, and SoundCloud's HLS CDNs.
+                      SoundCloud serves only HLS, which Chromium cannot play natively;
+                      hls.js fetches the playlist and segments over XHR/fetch, so those
+                      hosts must be reachable by connect-src (media-src covers only the
+                      MediaSource blob it feeds the <audio> element). Scoped to
+                      SoundCloud's CDN wildcards rather than opening connect-src to all
+                      https, since this page also holds Spotify tokens.
         media-src   - Spotify streams blob: URLs; the scraper services stream real
                       audio from many rotating CDN hosts (googlevideo, sndcdn, …),
                       which cannot be enumerated, so https: is allowed for media only
@@ -23,7 +29,7 @@
         style-src 'self' 'unsafe-inline';
         img-src 'self' data: https: ;
         media-src 'self' blob: https: ;
-        connect-src 'self' http://127.0.0.1:* https://api.spotify.com https://spclient.wg.spotify.com;
+        connect-src 'self' http://127.0.0.1:* https://api.spotify.com https://spclient.wg.spotify.com https://*.sndcdn.com https://*.soundcloud.cloud https://*.soundcloud.com;
         frame-src https://sdk.scdn.co https://open.spotify.com;
         object-src 'none';
         base-uri 'none';

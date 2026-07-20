@@ -17,6 +17,7 @@ import org.schabi.newpipe.extractor.linkhandler.LinkHandlerFactory;
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo;
 import org.schabi.newpipe.extractor.search.SearchInfo;
 import org.schabi.newpipe.extractor.stream.AudioStream;
+import org.schabi.newpipe.extractor.stream.DeliveryMethod;
 import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.extractor.stream.StreamInfoItem;
 import org.schabi.newpipe.extractor.stream.StreamType;
@@ -104,17 +105,39 @@ public class NewPipeExtractionService {
     }
 
     /**
-     * Resolves a playable audio stream URL for a track.
+     * A resolved, playable audio stream: its URL and how it is delivered.
+     *
+     * <p>{@code protocol} tells the client which player path to take. A plain HTML5
+     * {@code <audio>} element handles {@link #PROGRESSIVE}; {@link #HLS} needs
+     * Media Source Extensions (hls.js in Chromium/Electron, native on Safari/iOS),
+     * because Chromium ships no native HLS. SoundCloud increasingly serves only HLS,
+     * so this distinction is what makes it play at all — see the delivery-method
+     * preference in {@link #resolveAudioStream}.
+     */
+    public record ResolvedStream(String url, String protocol) {
+        public static final String PROGRESSIVE = "progressive";
+        public static final String HLS = "hls";
+    }
+
+    /**
+     * Resolves a playable audio stream for a track.
      *
      * <p>This is what direct playback needs. The URL is time-limited and tied to the
      * requesting IP, so it is resolved on demand rather than stored — a cached one goes
      * stale within hours.
      *
-     * @return the highest-bitrate audio-only stream's URL
+     * <p>Progressive delivery is preferred over HLS: a progressive URL plays straight
+     * through a plain {@code <audio>} element on every platform, while HLS needs Media
+     * Source Extensions. When a service offers both (YouTube), we take progressive and
+     * the client never touches hls.js. When a service offers only HLS (SoundCloud, for
+     * most tracks now), we return it flagged so the client uses the HLS path rather than
+     * silently failing with "audio format could not be played".
+     *
+     * @return the chosen audio-only stream's URL and its delivery protocol
      * @throws ProviderException if the track has no playable audio (deleted, private,
      *     region-locked, or a live stream)
      */
-    public String resolveAudioStreamUrl(
+    public ResolvedStream resolveAudioStream(
             StreamingService service, ProviderId providerId, TrackRef ref) {
         String url = urlForId(service, providerId, ref.providerTrackId());
         try {
@@ -127,18 +150,43 @@ public class NewPipeExtractionService {
                         "Live streams cannot be played as tracks");
             }
 
-            return info.getAudioStreams().stream()
+            List<AudioStream> playable = info.getAudioStreams().stream()
                     .filter(stream -> stream.getContent() != null && stream.isUrl())
-                    // Highest bitrate wins: this is a music player, and the audio-only
-                    // streams are small enough that quality is the only axis that matters.
+                    .filter(NewPipeExtractionService::isDirectlyPlayable)
+                    .toList();
+
+            // Highest bitrate wins within a protocol; this is a music player and the
+            // audio-only streams are small enough that quality is the only axis that
+            // matters. But a progressive stream is preferred over a higher-bitrate HLS
+            // one, because it plays on every platform with no extra machinery.
+            return playable.stream()
+                    .filter(stream -> !isHls(stream))
                     .max(Comparator.comparingInt(AudioStream::getAverageBitrate))
-                    .map(AudioStream::getContent)
+                    .map(stream -> new ResolvedStream(stream.getContent(), ResolvedStream.PROGRESSIVE))
+                    .or(() -> playable.stream()
+                            .filter(NewPipeExtractionService::isHls)
+                            .max(Comparator.comparingInt(AudioStream::getAverageBitrate))
+                            .map(stream -> new ResolvedStream(stream.getContent(), ResolvedStream.HLS)))
                     .orElseThrow(() -> new ProviderException(
                             providerId, ProviderException.Kind.NOT_FOUND,
                             "No playable audio stream for this track"));
         } catch (ExtractionException | java.io.IOException e) {
             throw wrap(providerId, "playback", e);
         }
+    }
+
+    /**
+     * Whether a stream is one the client can actually play. Progressive HTTP plays in a
+     * plain {@code <audio>} element; HLS plays via MSE (hls.js/native). DASH, Smooth
+     * Streaming and torrents have no player here, so they are excluded rather than handed
+     * over to fail opaquely.
+     */
+    private static boolean isDirectlyPlayable(AudioStream stream) {
+        return stream.getDeliveryMethod() == DeliveryMethod.PROGRESSIVE_HTTP || isHls(stream);
+    }
+
+    private static boolean isHls(AudioStream stream) {
+        return stream.getDeliveryMethod() == DeliveryMethod.HLS;
     }
 
     /** Reconstructs the watch/track URL from a stored provider id. */

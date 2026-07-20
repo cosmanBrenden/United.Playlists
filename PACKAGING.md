@@ -93,16 +93,32 @@ Spotify's Web Playback SDK needs a VMP-signed Widevine binary (HANDOFF hiccup #2
 Dev builds are signed with Castlabs' development key automatically; a DISTRIBUTED
 build must be signed with a production key via Castlabs' EVS service.
 
-packaging/afterPack.cjs runs this automatically during `npm run dist*`:
-  - It is best-effort by default: if the castlabs-evs tool or account is missing it
-    prints a warning and continues. The installer still works — YouTube and
-    SoundCloud play; only Spotify playback is disabled in that build.
+Two pieces run automatically during `npm run dist*`:
+  - dist:sign:ensure (scripts/setup-evs.mjs --ensure) runs BEFORE electron-builder and
+    refreshes the cached EVS session (or logs in from UP_EVS_* env vars) so a valid
+    token exists when signing happens. Best-effort: no session → a warning, build
+    continues unsigned.
+  - packaging/afterPack.cjs then VMP-signs the packaged app. Also best-effort: if the
+    castlabs-evs tool or account is missing it warns and continues. The installer still
+    works — YouTube and SoundCloud play; only Spotify playback is disabled in that build.
   - Set UP_VMP_REQUIRED=1 to make a signing failure fail the build instead.
 
-To enable it:
+To enable it, set EVS up ONCE on the machine, then just build:
+  npm run setup:evs                       # installs castlabs-evs, then ASKS whether to
+                                          #   log in or create an account — no existing
+                                          #   account is assumed
+  npm run dist                            # auto-refreshes the session and signs
+
+  # Skip the prompt with an explicit mode; supply credentials via the environment:
+  npm run setup:evs -- --login                        # log into an existing account
+  npm run setup:evs -- --signup                       # create one (prompts for the code)
+  npm run setup:evs -- --signup --confirm <code>      # CI: finish signup with the code
+  UP_EVS_ACCOUNT=… UP_EVS_PASSWORD=… npm run setup:evs -- --login   # non-interactive (CI)
+
+  # Under the hood setup:evs wraps these; you can still run them by hand:
   pip install --upgrade castlabs-evs
-  python -m castlabs_evs.account          # one-time: create/log into an EVS account
-  UP_VMP_REQUIRED=1 npm run dist          # signs release/**/<app> during afterPack
+  python -m castlabs_evs.account reauth   # log into an existing EVS account
+  UP_VMP_REQUIRED=1 npm run dist          # signs release/**/<app>, failing if it can't
 
 
 5. STILL TO POLISH (not blockers)

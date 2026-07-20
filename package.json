@@ -23,12 +23,14 @@
     "build": "npm run build --workspaces --if-present",
     "backend:build": "cd backend && mvn -B package -DskipTests",
     "backend:test": "cd backend && mvn -B verify",
+    "setup:evs": "node scripts/setup-evs.mjs",
     "dist:prepare": "npm run build --workspace @unitedplaylists/core-ui && npm run backend:build",
-    "dist": "npm run dist:prepare && electron-builder",
-    "dist:dir": "npm run dist:prepare && electron-builder --dir",
-    "dist:linux": "npm run dist:prepare && electron-builder --linux",
-    "dist:win": "npm run dist:prepare && electron-builder --win",
-    "dist:mac": "npm run dist:prepare && electron-builder --mac"
+    "dist:sign:ensure": "node scripts/setup-evs.mjs --ensure",
+    "dist": "npm run dist:prepare && npm run dist:sign:ensure && electron-builder",
+    "dist:dir": "npm run dist:prepare && npm run dist:sign:ensure && electron-builder --dir",
+    "dist:linux": "npm run dist:prepare && npm run dist:sign:ensure && electron-builder --linux",
+    "dist:win": "npm run dist:prepare && npm run dist:sign:ensure && electron-builder --win",
+    "dist:mac": "npm run dist:prepare && npm run dist:sign:ensure && electron-builder --mac"
   },
   "allowScripts": {
     "electron@43.0.0+wvcus": true,

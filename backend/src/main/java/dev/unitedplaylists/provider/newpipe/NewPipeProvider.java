@@ -89,10 +89,17 @@ public abstract class NewPipeProvider implements MusicProvider {
         // Resolved fresh every time: stream URLs are short-lived and IP-bound, so a
         // cached one is worse than useless. This is the one place a scraper provider
         // does real work at play time rather than at import.
-        String streamUrl = extraction.resolveAudioStreamUrl(service(), id(), ref);
+        NewPipeExtractionService.ResolvedStream stream =
+                extraction.resolveAudioStream(service(), id(), ref);
+        // "protocol" tells the client whether the URL is a progressive file (plain
+        // <audio>) or an HLS playlist (needs hls.js/native MSE). SoundCloud is HLS-only
+        // for most tracks, so without this flag it would fail to play at all.
         return new PlaybackTicket(
                 ref,
                 PlaybackMethod.DIRECT_AUDIO,
-                Map.of("streamUrl", streamUrl, "trackId", ref.providerTrackId()));
+                Map.of(
+                        "streamUrl", stream.url(),
+                        "protocol", stream.protocol(),
+                        "trackId", ref.providerTrackId()));
     }
 }

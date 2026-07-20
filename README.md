@@ -47,6 +47,7 @@ A track that lives on one service can be swapped for the same song on another. O
 **To build or run from source**, you additionally need:
 
 - **Maven 3.9+** and **Node 20+**
+- **Python 3** — only for building a *distributable* installer with working Spotify playback. It runs the Castlabs EVS tool that VMP-signs the build for Widevine (see [Signing for Spotify playback](#signing-for-spotify-playback-widevine-vmp) and `npm run setup:evs`). Running from source, and building unsigned installers, do not need it.
 
 Spotify is the only service that needs credentials, and only if you want to use it:
 
@@ -62,9 +63,11 @@ Spotify is the only service that needs credentials, and only if you want to use 
 
 The builds are VMP-signed for development, so nothing extra is needed to run from source. Distributing a packaged app needs production signing through [castLabs' EVS](https://github.com/castlabs/electron-releases/wiki/EVS). On Linux, Widevine works but persistent licenses do not — irrelevant here, since nothing is downloaded for offline use.
 
-**If `npm install` fails to fetch Electron** with `Host key verification failed` or `Could not read from remote repository`: npm rewrites GitHub dependencies to `git+ssh://` and needs SSH keys. Point git at HTTPS instead:
+**If `npm install` fails to fetch Electron** with `Host key verification failed` or `Could not read from remote repository`: npm rewrites the GitHub dependency to `git+ssh://git@github.com/castlabs/electron-releases.git` in the lockfile and needs SSH keys. Point git at HTTPS instead. The URL npm hands git is the `ssh://` form, so the rewrite must match *that* — a scp-style `git@github.com:` rule does not:
 
 ```bash
+git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+# (harmless to add the scp-style form too, for any tool that uses it)
 git config --global url."https://github.com/".insteadOf "git@github.com:"
 ```
 
@@ -72,6 +75,12 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 ```bash
 npm install-scripts approve electron
+```
+
+If `dist/` is *still* empty after that, trigger the download directly. Running the Electron package's entry point resolves the binary path and downloads+extracts it if missing:
+
+```bash
+node node_modules/electron/index.js
 ```
 
 ## Running it
@@ -108,7 +117,26 @@ npm run dist:mac      # dmg + zip
 
 Each command builds the renderer and the backend jar first, then packages them with the Electron shell. The installed app bundles everything except Java: it expects **Java 21+** on the user's PATH (see [Requirements](#requirements)). Build each platform's installer on that platform (or in CI) — a macOS `.dmg` in particular cannot be produced on Linux or Windows.
 
-Full details, including the Widevine VMP signing needed for Spotify playback in a distributed build, are in [PACKAGING.md](PACKAGING.md).
+### Signing for Spotify playback (Widevine VMP)
+
+Spotify playback in a *packaged* build needs the app to be VMP-signed with a Castlabs EVS production key (a dev run from source is signed automatically; a distributed build is not). The `dist` scripts do this for you — they refresh the EVS session and `packaging/afterPack.cjs` signs the app during packaging — once you have set EVS up **once** on the machine:
+
+```bash
+npm run setup:evs          # installs the Castlabs EVS tool, then asks whether to
+                           #   log in or create an account (no account needed up front)
+npm run dist               # build; the app is VMP-signed automatically
+```
+
+`setup:evs` needs **Python 3** (see [Requirements](#requirements)). On a fresh machine with no EVS account it walks you through creating one (it prompts for the code EVS emails you); if you already have an account it logs in. You can also skip the prompt:
+
+```bash
+npm run setup:evs -- --login    # log in to an existing account
+npm run setup:evs -- --signup   # create a new account
+```
+
+Credentials can be supplied non-interactively via `UP_EVS_ACCOUNT` / `UP_EVS_PASSWORD` (and `UP_EVS_EMAIL` / `UP_EVS_FIRST_NAME` / `UP_EVS_LAST_NAME` for signup); in CI, add `--confirm <code>` to finish a signup with the emailed code. If EVS is not set up, `npm run dist` still produces a working installer — YouTube and SoundCloud play; only Spotify playback is disabled in that build. Set `UP_VMP_REQUIRED=1` to make missing signing fail the build instead.
+
+Full details are in [PACKAGING.md](PACKAGING.md).
 
 ## Tests
 
@@ -149,6 +177,24 @@ The provider abstraction is the point of the design. To add one:
 4. Implement `PlayerAdapter` in `core-ui/src/player/` and pass it to the `Player`.
 
 Nothing else changes. `ProviderRegistryTest` demonstrates this with a service invented inside the test.
+
+## Where your data is stored
+
+Everything the app keeps lives in one per-user directory, the OS-native application-data location:
+
+| OS      | Location                                                                        |
+| ------- | ------------------------------------------------------------------------------- |
+| Windows | `%APPDATA%\UnitedPlaylists` (`C:\Users\<you>\AppData\Roaming\UnitedPlaylists`)   |
+| macOS   | `~/Library/Application Support/UnitedPlaylists`                                  |
+| Linux   | `~/.config/UnitedPlaylists` (or `$XDG_CONFIG_HOME/UnitedPlaylists`)             |
+
+That directory holds:
+
+- the **H2 database** — your playlists and your OAuth tokens (the tokens encrypted with AES-256-GCM);
+- **`token.key`** — nothing sensitive on its own; the *decryption* key for it lives in the OS keychain (see below), never on disk;
+- **`newpipe/`** — the cached NewPipeExtractor update used for YouTube/SoundCloud scraping.
+
+Nothing is written next to the installed program, so the app runs from a read-only install and uninstalls cleanly by removing that folder. The **token-encryption key** itself is kept in the OS keychain — Keychain on macOS, Credential Manager (DPAPI) on Windows, the Secret Service on Linux — not in the folder above. When running from source without the Electron shell, the backend falls back to `~/.unitedplaylists` for the data directory (overridable with `UP_DATA_DIR`).
 
 ## Security notes
 
